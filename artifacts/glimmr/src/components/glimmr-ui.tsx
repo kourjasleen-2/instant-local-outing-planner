@@ -109,7 +109,7 @@ export function PlanCard({ plan }: { plan: Plan }) {
   </article>;
 }
 
-export function TimelineStep({ step, index, onEdit, onReplace, onDelete }: { step: PlanStep; index: number; onEdit: () => void; onReplace: () => void; onDelete: () => void }) {
+export function TimelineStep({ step, index, onEdit, onReplace, onDelete, canDelete = true }: { step: PlanStep; index: number; onEdit: () => void; onReplace: () => void; onDelete: () => void; canDelete?: boolean }) {
   return <div className={`timeline-step ${index % 2 ? 'walk' : ''}`} data-testid={`timeline-step-${step.id}`}>
     <div className="timeline-marker">{index + 1}</div>
     <div className="timeline-info">
@@ -121,12 +121,12 @@ export function TimelineStep({ step, index, onEdit, onReplace, onDelete }: { ste
     <div className="timeline-actions">
       <button className="btn btn-icon btn-ghost" onClick={onEdit} aria-label={`Edit ${step.place.name}`} title={`Edit ${step.place.name}`} data-testid={`button-edit-${step.id}`}><Clock3 size={16} /></button>
       <button className="btn btn-icon btn-ghost" onClick={onReplace} aria-label={`Replace ${step.place.name}`} title={`Replace ${step.place.name}`} data-testid={`button-replace-${step.id}`}><RefreshCw size={16} /></button>
-      <button className="btn btn-icon btn-ghost" onClick={onDelete} aria-label={`Delete ${step.place.name}`} title={`Delete ${step.place.name}`} data-testid={`button-delete-${step.id}`}><Trash2 size={16} /></button>
+      <button className="btn btn-icon btn-ghost" onClick={onDelete} disabled={!canDelete} aria-label={`Delete ${step.place.name}`} title={canDelete ? `Delete ${step.place.name}` : 'A plan needs at least one stop'} data-testid={`button-delete-${step.id}`}><Trash2 size={16} /></button>
     </div>
   </div>;
 }
 
-type EditValue = { kind: 'place' | 'duration' | 'instruction'; value: string };
+type EditValue = { kind: 'place' | 'duration' | 'instruction'; value: string; instruction?: string };
 
 export function EditDialog({ step, mode, onClose, onSave }: { step?: PlanStep; mode: 'edit' | 'replace' | 'add'; onClose: () => void; onSave: (value: EditValue) => void }) {
   // Same category as the stop being replaced, so a coffee stop swaps for
@@ -174,7 +174,7 @@ export function EditDialog({ step, mode, onClose, onSave }: { step?: PlanStep; m
        {mode === 'replace' && (replaceOptions.length ? <div className="choice-grid">{replaceOptions.map((place) => <button type="button" key={place.id} className="choice" onClick={() => onSave({ kind: 'place', value: place.id })} data-testid={`button-option-${place.id}`}>{place.name}</button>)}</div> : <p className="muted">No other {step?.place.category.toLowerCase()} spots in this area yet — try a custom instruction below.</p>)}
         {mode === 'add' && <div className="add-stop-picker"><span className="field-label">What kind of stop?</span><div className="choice-grid">{addCategories.map((category) => <button type="button" key={category} className={`choice ${selectedCategory === category ? 'selected' : ''}`} onClick={() => setSelectedCategory(category)} data-testid={`button-add-category-${category.toLowerCase()}`}>{category}</button>)}</div>{selectedCategory && selectedCategory !== 'Custom' && <div className="candidate-list"><span className="field-label">Candidates for {selectedCategory.toLowerCase()}</span><div className="choice-grid">{places.filter((place) => { if (selectedCategory === 'Food') return place.category === 'Dinner'; return place.category === selectedCategory; }).map((place) => <button type="button" key={place.id} className="choice" onClick={() => onSave({ kind: 'place', value: place.id })} data-testid={`button-candidate-${place.id}`}>{place.name}</button>)}</div></div>}{selectedCategory === 'Custom' && <p className="muted add-stop-note">Use the instruction below to describe a custom stop.</p>}</div>}
        <div className="field instruction-field"><label htmlFor={instructionId}>Custom instruction <span className="muted">optional</span></label><textarea id={instructionId} className="input" placeholder={mode === 'add' ? 'A bakery, a gallery, somewhere quiet...' : 'Make it cheaper, go farther, keep it outdoors...'} rows={3} /></div>
-       <div className="dialog-actions"><button className="btn btn-soft" onClick={onClose} data-testid="button-cancel-dialog">Cancel</button>{mode === 'edit' && <button className="btn btn-blue" onClick={() => { const input = document.getElementById('duration') as HTMLInputElement; onSave({ kind: 'duration', value: input.value }); }} data-testid="button-save-dialog">Save changes <Check size={15} /></button>}{mode !== 'edit' && <button className="btn btn-blue" onClick={() => { const input = document.getElementById(instructionId) as HTMLTextAreaElement; if (input.value.trim()) onSave({ kind: 'instruction', value: input.value.trim() }); }} data-testid="button-save-instruction">Use instruction <Check size={15} /></button>}</div>
+       <div className="dialog-actions"><button className="btn btn-soft" onClick={onClose} data-testid="button-cancel-dialog">Cancel</button>{mode === 'edit' && <button className="btn btn-blue" onClick={() => { const durationInput = document.getElementById('duration') as HTMLInputElement; const instructionInput = document.getElementById(instructionId) as HTMLTextAreaElement; onSave({ kind: 'duration', value: durationInput.value, instruction: instructionInput.value.trim() || undefined }); }} data-testid="button-save-dialog">Save changes <Check size={15} /></button>}{mode !== 'edit' && <button className="btn btn-blue" onClick={() => { const input = document.getElementById(instructionId) as HTMLTextAreaElement; if (input.value.trim()) onSave({ kind: 'instruction', value: input.value.trim() }); }} disabled={mode === 'add' && selectedCategory !== 'Custom'} data-testid="button-save-instruction">Use instruction <Check size={15} /></button>}</div>
     </motion.section>
   </motion.div>;
 }

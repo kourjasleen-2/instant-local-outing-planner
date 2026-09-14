@@ -180,6 +180,28 @@ function buildSteps(sequence: Place[], request: PlannerRequest): PlanStep[] {
   return steps;
 }
 
+/** Recalculate travel and arrival times after a user changes a route. */
+export function recalculateRoute(steps: PlanStep[], request: PlannerRequest): PlanStep[] {
+  const recalculated: PlanStep[] = [];
+  let clock = START_TIME_MINUTES;
+  let previous: Place | null = null;
+
+  for (const step of steps) {
+    const travel = previous ? estimateTravel(previous, step.place, request.transport) : { minutes: 0, distanceKm: 0 };
+    clock += travel.minutes;
+    recalculated.push({
+      ...step,
+      arrival: formatClock(clock),
+      travelMinutes: travel.minutes,
+      distanceKm: travel.distanceKm,
+    });
+    clock += step.durationMinutes;
+    previous = step.place;
+  }
+
+  return recalculated;
+}
+
 function totalsFor(steps: PlanStep[]) {
   const pricePerPerson = steps.reduce((sum, step) => sum + placePrice(step.place), 0);
   const totalMinutes = steps.reduce((sum, step) => sum + step.durationMinutes + step.travelMinutes, 0);

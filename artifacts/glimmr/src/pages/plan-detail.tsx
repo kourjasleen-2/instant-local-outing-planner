@@ -20,16 +20,20 @@ export default function PlanDetail() {
   const [loading, setLoading] = useState(true);
   const [operation, setOperation] = useState<PlanStatus>('idle');
   const [changeNotice, setChangeNotice] = useState<string | null>(null);
-  useEffect(() => { getPlanById(id ?? '').then(setPlan).finally(() => setLoading(false)); }, [id]);
+  useEffect(() => {
+    let cancelled = false;
+    getPlanById(id ?? '').then((loadedPlan) => { if (!cancelled) setPlan(loadedPlan); }).finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [id]);
   if (loading) return <div className="glimmr-app"><Header compact /><main className="page container-shell"><div className="skeleton" /></main></div>;
   if (!plan) return <div className="glimmr-app"><Header compact /><main className="page container-shell"><div className="surface error-card"><h2 className="display">That plan wandered off.</h2><Link href="/results" className="btn btn-blue">Back to plans</Link></div></main></div>;
-  const applyEdit = async (value: { kind: 'place' | 'duration' | 'instruction'; value: string }) => {
+  const applyEdit = async (value: { kind: 'place' | 'duration' | 'instruction'; value: string; instruction?: string }) => {
     if (!dialog) return;
     const edit = dialog.mode === 'add'
-      ? { type: 'add' as const, placeId: value.kind === 'place' ? value.value : places[0]?.id, instruction: value.kind === 'instruction' ? value.value : undefined }
+      ? { type: 'add' as const, placeId: value.kind === 'place' ? value.value : undefined, instruction: value.kind === 'instruction' ? value.value : undefined }
       : dialog.mode === 'replace' && value.kind === 'place'
         ? { type: 'replace' as const, stepId: dialog.step?.id, placeId: value.value }
-        : { type: 'edit' as const, stepId: dialog.step?.id, changes: value.kind === 'duration' ? { durationMinutes: Number(value.value) } : { note: value.value }, instruction: value.kind === 'instruction' ? value.value : undefined };
+        : { type: 'edit' as const, stepId: dialog.step?.id, changes: value.kind === 'duration' ? { durationMinutes: Number(value.value) } : { note: value.value }, instruction: value.instruction ?? (value.kind === 'instruction' ? value.value : undefined) };
     const nextOperation: PlanStatus = dialog.mode === 'add' ? 'adding' : dialog.mode === 'replace' ? 'replacing' : 'editing';
     setOperation(nextOperation);
     setPlan((current) => current ? { ...current, status: nextOperation } : current);
@@ -51,6 +55,7 @@ export default function PlanDetail() {
     }
   };
   const deleteStep = async (step: PlanStep) => {
+    if (plan.steps.length <= 1) return;
     if (!window.confirm(`Remove ${step.place.name} from this plan?`)) return;
     setOperation('deleting');
     setPlan((current) => current ? { ...current, status: 'deleting' } : current);
@@ -87,7 +92,7 @@ export default function PlanDetail() {
               exit={{ opacity: 0, height: 0 }}
               transition={{ duration: motionDuration.content, ease }}
             >
-              <TimelineStep step={step} index={index} onEdit={() => setDialog({ mode: 'edit', step })} onReplace={() => setDialog({ mode: 'replace', step })} onDelete={() => void deleteStep(step)} />
+              <TimelineStep step={step} index={index} onEdit={() => setDialog({ mode: 'edit', step })} onReplace={() => setDialog({ mode: 'replace', step })} onDelete={() => void deleteStep(step)} canDelete={plan.steps.length > 1} />
             </motion.div>
           ))}
         </AnimatePresence>

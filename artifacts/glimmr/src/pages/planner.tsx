@@ -15,7 +15,13 @@ const budgetOptions = [[100, '₹100 · keep it light'], [250, '₹250 · comfor
 
 export default function Planner() {
   const [, setLocation] = useLocation();
-  const [form, setForm] = useState<PlannerRequest>(defaultRequest);
+  const [form, setForm] = useState<PlannerRequest>(() => {
+    try {
+      return JSON.parse(sessionStorage.getItem('glimmr-request') ?? JSON.stringify(defaultRequest)) as PlannerRequest;
+    } catch {
+      return defaultRequest;
+    }
+  });
   const [errors, setErrors] = useState<Partial<Record<'from' | 'to' | 'availableMinutes' | 'budget' | 'people', string>>>({});
   const update = <K extends keyof PlannerRequest>(key: K, value: PlannerRequest[K]) => {
     setForm((current) => ({ ...current, [key]: value }));

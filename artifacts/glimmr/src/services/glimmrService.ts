@@ -1,5 +1,5 @@
-import { defaultRequest, places } from '@/data/mockData';
-import { generatePlans } from '@/lib/recommendationEngine';
+import { places } from '@/data/mockData';
+import { generatePlans, parsePreferenceTags, recalculateRoute } from '@/lib/recommendationEngine';
 import { placePrice } from '@/lib/glimmr-format';
 import type { Outing, Plan, PlanEdit, PlannerRequest, PlanStep } from '@/types/glimmr';
 
@@ -14,6 +14,23 @@ const wait = (ms = 420) => new Promise((resolve) => window.setTimeout(resolve, m
  * until a real backend replaces this service layer.
  */
 const planStore = new Map<string, Plan>();
+const PLAN_STORE_KEY = 'glimmr-plans';
+const OUTING_STORE_KEY = 'glimmr-outings';
+
+function restorePlans(): void {
+  if (planStore.size || typeof window === 'undefined') return;
+  try {
+    const saved = JSON.parse(window.sessionStorage.getItem(PLAN_STORE_KEY) ?? '[]') as Plan[];
+    saved.forEach((plan) => planStore.set(plan.id, plan));
+  } catch {
+    window.sessionStorage.removeItem(PLAN_STORE_KEY);
+  }
+}
+
+function persistPlans(): void {
+  if (typeof window === 'undefined') return;
+  window.sessionStorage.setItem(PLAN_STORE_KEY, JSON.stringify([...planStore.values()]));
+}
 
 export function calculatePlanTotals(plan: Plan, status: Plan['status'] = plan.status): Plan {
   const pricePerPerson = plan.steps.reduce((total, step) => total + placePrice(step.place), 0);
@@ -33,33 +50,56 @@ export function calculatePlanTotals(plan: Plan, status: Plan['status'] = plan.st
     status,
   };
   planStore.set(updated.id, updated);
+  persistPlans();
   return updated;
 }
 
 export async function createPlans(request: PlannerRequest): Promise<Plan[]> {
   await wait();
   if (request.availableMinutes <= 30 || request.budget <= 100) return [];
-  return generatePlans(request, places).map((plan) => calculatePlanTotals(plan, 'ready'));
+  planStore.clear();
+  const plans = generatePlans(request, places).map((plan) => calculatePlanTotals(plan, 'ready'));
+  persistPlans();
+  return plans;
 }
 
-export async function getPlanById(id: string): Promise<Plan> {
+export async function getPlanById(id: string): Promise<Plan | null> {
   await wait(260);
+  restorePlans();
   const cached = planStore.get(id);
   if (cached) return calculatePlanTotals(cached, 'ready');
-  // Refresh fallback: regenerate from the default request.
-  const [fallback] = generatePlans(defaultRequest, places);
-  return calculatePlanTotals(fallback, 'ready');
+  return null;
 }
 
-export async function getOuting(planId: string): Promise<Outing> {
+export async function getOuting(planId: string): Promise<Outing | null> {
   const plan = await getPlanById(planId);
-  return {
+  if (!plan) return null;
+  try {
+    const outings = JSON.parse(window.sessionStorage.getItem(OUTING_STORE_KEY) ?? '{}') as Record<string, Outing>;
+    if (outings[planId]) return outings[planId];
+  } catch {
+    window.sessionStorage.removeItem(OUTING_STORE_KEY);
+  }
+  const outing: Outing = {
     id: `outing-${planId}`,
     planId,
     startedAt: new Date().toISOString(),
     currentStepId: plan.steps[1]?.id ?? plan.steps[0].id,
     completedStepIds: [plan.steps[0]?.id ?? ''],
   };
+  saveOuting(outing);
+  return outing;
+}
+
+export function saveOuting(outing: Outing): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const outings = JSON.parse(window.sessionStorage.getItem(OUTING_STORE_KEY) ?? '{}') as Record<string, Outing>;
+    outings[outing.planId] = outing;
+    window.sessionStorage.setItem(OUTING_STORE_KEY, JSON.stringify(outings));
+  } catch {
+    window.sessionStorage.setItem(OUTING_STORE_KEY, JSON.stringify({ [outing.planId]: outing }));
+  }
 }
 
 export async function editPlan(plan: Plan, edit: PlanEdit): Promise<Plan> {
@@ -67,7 +107,7 @@ export async function editPlan(plan: Plan, edit: PlanEdit): Promise<Plan> {
   let steps = [...plan.steps];
 
   if (edit.type === 'delete' && edit.stepId) {
-    steps = steps.filter((step) => step.id !== edit.stepId);
+    if (steps.length > 1) steps = steps.filter((step) => step.id !== edit.stepId);
   }
 
   if (edit.type === 'replace' && edit.stepId && edit.placeId) {
@@ -110,8 +150,11 @@ export async function editPlan(plan: Plan, edit: PlanEdit): Promise<Plan> {
     }
   }
 
-  if (edit.type === 'add' && edit.placeId) {
-    const place = places.find((item) => item.id === edit.placeId);
+  if (edit.type === 'add') {
+    const tags = parsePreferenceTags(edit.instruction);
+    const place = edit.placeId
+      ? places.find((item) => item.id === edit.placeId)
+      : places.find((item) => item.serviceArea === plan.steps[0]?.place.serviceArea && tags.some((tag) => item.activities.includes(tag)));
     if (place) {
       const previous = steps[steps.length - 1]?.place;
       const newStep: PlanStep = {
@@ -127,5 +170,12 @@ export async function editPlan(plan: Plan, edit: PlanEdit): Promise<Plan> {
     }
   }
 
-  return calculatePlanTotals({ ...plan, steps }, 'success');
+  const routedSteps = recalculateRoute(steps, plan.request);
+  return calculatePlanTotals({
+    ...plan,
+    steps: routedSteps,
+    title: routedSteps.map((step) => step.place.name).slice(0, 2).join(' → '),
+    subtitle: routedSteps.map((step) => step.place.subcategory ?? step.place.category).join(', '),
+    vibe: routedSteps[0]?.place.vibe ?? plan.vibe,
+  }, 'success');
 }

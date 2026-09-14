@@ -16,7 +16,7 @@ V1 covers **Indiranagar, Bengaluru**.
 - **Frontend**: React 19, TypeScript, Vite, Tailwind CSS v4, Wouter, Framer Motion
 - **Backend**: Express 5, Node.js (currently only a health check endpoint)
 - **Database**: PostgreSQL + Drizzle ORM (schema in progress)
-- **Tooling**: pnpm workspaces, Orval (API codegen from OpenAPI spec), esbuild
+- **Tooling**: npm workspaces, Orval (API codegen from OpenAPI spec), esbuild
 
 ## Project structure
 
@@ -32,34 +32,34 @@ scripts/                # Workspace utility scripts
 
 ## Getting started
 
-Install dependencies (requires [pnpm](https://pnpm.io)):
+Install dependencies:
 
 ```bash
-pnpm install
+npm install
 ```
 
 Run the frontend:
 
 ```bash
-PORT=5173 BASE_PATH=/ pnpm --filter @workspace/glimmr run dev
+PORT=5173 BASE_PATH=/ npm run dev -w @glimmr/app
 ```
 
 Run the API server:
 
 ```bash
-pnpm --filter @workspace/api-server run dev
+npm run dev -w @glimmr/api-server
 ```
 
 Type-check the entire workspace:
 
 ```bash
-pnpm run typecheck
+npm run typecheck
 ```
 
 Build everything:
 
 ```bash
-pnpm run build
+npm run build
 ```
 
 ## Environment variables

@@ -4,6 +4,7 @@ import { ErrorBoundary } from '@/components/error-boundary';
 import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { PageTransition } from '@/components/motion/PageTransition';
+// import { FirebaseTest } from '@/components/FirebaseTest';
 import NotFound from '@/pages/not-found';
 import Home from '@/pages/home';
 import Planner from '@/pages/planner';
@@ -52,6 +53,8 @@ function App() {
           <Router />
         </WouterRouter>
         <Toaster />
+        {/* Firebase connection status - disabled to improve load time */}
+        {/* {import.meta.env.DEV && <FirebaseTest />} */}
       </TooltipProvider>
     </QueryClientProvider>
   );
