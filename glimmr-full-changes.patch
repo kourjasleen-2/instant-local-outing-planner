@@ -1,0 +1,1593 @@
+diff --git a/artifacts/glimmr/smoke-test-engine.ts b/artifacts/glimmr/smoke-test-engine.ts
+new file mode 100644
+index 0000000..42c0fe0
+--- /dev/null
++++ b/artifacts/glimmr/smoke-test-engine.ts
+@@ -0,0 +1,27 @@
++import { generatePlans } from './src/lib/recommendationEngine';
++import { places, defaultRequest } from './src/data/mockData';
++import { placePrice } from './src/lib/glimmr-format';
++
++function run(label: string, request: typeof defaultRequest) {
++  console.log(`\n=== ${label} ===`);
++  console.log('request:', JSON.stringify(request));
++  const plans = generatePlans(request, places);
++  if (!plans.length) { console.log('NO PLANS GENERATED'); return; }
++  for (const plan of plans) {
++    console.log(`\n[${plan.recommendationLabel}] ${plan.title}`);
++    console.log(`  vibe: ${plan.vibe}`);
++    console.log(`  feasible: ${plan.feasible}${plan.feasibilityNote ? ' -- ' + plan.feasibilityNote : ''}`);
++    console.log(`  price/person: Rs${plan.pricePerPerson}  group total: Rs${plan.groupTotal}`);
++    console.log(`  total time: ${plan.totalMinutes}min  travel: ${plan.travelMinutes}min  distance: ${plan.totalDistanceKm}km`);
++    console.log(`  reasons: ${plan.recommendationReason.join(', ')}`);
++    for (const step of plan.steps) {
++      console.log(`    - ${step.arrival}  ${step.place.name} (${step.place.category}, Rs${placePrice(step.place)})  [+${step.travelMinutes}min travel, ${step.distanceKm}km]`);
++    }
++  }
++}
++
++run('Default request (Food crawl, 180min, budget 500, 4 people, transit)', defaultRequest);
++run('Tight budget + short time', { ...defaultRequest, availableMinutes: 90, budget: 250 });
++run('Date night, low-key', { ...defaultRequest, outingType: 'Date night', people: 2, preference: 'somewhere peaceful and quiet, good for photos' });
++run('Fresh air, walking', { ...defaultRequest, outingType: 'Fresh air', transport: 'walk', preference: 'outdoor and free' });
++run('Impossible: 20 min available', { ...defaultRequest, availableMinutes: 20 });
+diff --git a/artifacts/glimmr/src/App.tsx b/artifacts/glimmr/src/App.tsx
+index d353f89..ead06df 100644
+--- a/artifacts/glimmr/src/App.tsx
++++ b/artifacts/glimmr/src/App.tsx
+@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+ import { ErrorBoundary } from '@/components/error-boundary';
+ import { Toaster } from '@/components/ui/toaster';
+ import { TooltipProvider } from '@/components/ui/tooltip';
++import { PageTransition } from '@/components/motion/PageTransition';
+ import NotFound from '@/pages/not-found';
+ import Home from '@/pages/home';
+ import Planner from '@/pages/planner';
+@@ -19,18 +20,21 @@ import {
+ const queryClient = new QueryClient();
+ 
+ function Router() {
++  const [location] = useLocation();
+   return (
+     // Keep a shared shell (sidebar, navbar) outside the boundary so it
+     // survives a page crash.
+     <RoutedErrorBoundary>
+-      <Switch>
+-         <Route path="/" component={Home} />
+-         <Route path="/planner" component={Planner} />
+-         <Route path="/results" component={Results} />
+-         <Route path="/plan/:id" component={PlanDetail} />
+-         <Route path="/outing/:id" component={Outing} />
+-        <Route component={NotFound} />
+-      </Switch>
++      <PageTransition routeKey={location}>
++        <Switch>
++           <Route path="/" component={Home} />
++           <Route path="/planner" component={Planner} />
++           <Route path="/results" component={Results} />
++           <Route path="/plan/:id" component={PlanDetail} />
++           <Route path="/outing/:id" component={Outing} />
++          <Route component={NotFound} />
++        </Switch>
++      </PageTransition>
+     </RoutedErrorBoundary>
+   );
+ }
+diff --git a/artifacts/glimmr/src/components/glimmr-preloader.tsx b/artifacts/glimmr/src/components/glimmr-preloader.tsx
+index 377ded8..4662a9f 100644
+--- a/artifacts/glimmr/src/components/glimmr-preloader.tsx
++++ b/artifacts/glimmr/src/components/glimmr-preloader.tsx
+@@ -1,4 +1,5 @@
+ import { useEffect, useState } from 'react';
++import { usePrefersReducedMotion } from '@/lib/motion';
+ 
+ const PRELOADER_KEY = 'glimmr-preloader-seen';
+ const messages = ['finding your moment...', 'shaping your plan...', 'ready when you are.'];
+@@ -15,10 +16,10 @@ function shouldShowPreloader() {
+ export default function GlimmrPreloader() {
+   const [visible, setVisible] = useState(shouldShowPreloader);
+   const [messageIndex, setMessageIndex] = useState(0);
++  const reducedMotion = usePrefersReducedMotion();
+ 
+   useEffect(() => {
+     if (!visible) return;
+-    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+     const finish = () => {
+       try {
+         window.sessionStorage.setItem(PRELOADER_KEY, 'true');
+@@ -39,7 +40,7 @@ export default function GlimmrPreloader() {
+       window.clearInterval(messageTimer);
+       window.clearTimeout(finishTimer);
+     };
+-  }, [visible]);
++  }, [visible, reducedMotion]);
+ 
+   if (!visible) return null;
+   return (
+diff --git a/artifacts/glimmr/src/components/glimmr-ui.tsx b/artifacts/glimmr/src/components/glimmr-ui.tsx
+index 398f84a..9d2c7f2 100644
+--- a/artifacts/glimmr/src/components/glimmr-ui.tsx
++++ b/artifacts/glimmr/src/components/glimmr-ui.tsx
+@@ -1,9 +1,11 @@
+ import { useEffect, useRef, useState } from 'react';
++import { motion } from 'framer-motion';
+ import { ArrowRight, Check, Clock3, Footprints, MapPin, RefreshCw, Route, Sparkles, Trash2, X } from 'lucide-react';
+ import { Link } from 'wouter';
+ import { places } from '@/data/mockData';
+ import type { LocationStatus, Plan, PlanStep } from '@/types/glimmr';
+-import { formatDuration, formatINR } from '@/lib/glimmr-format';
++import { formatDuration, formatINR, placePrice } from '@/lib/glimmr-format';
++import { duration as motionDuration, ease, useMatchMedia, usePrefersReducedMotion } from '@/lib/motion';
+ 
+ export function Logo() {
+   return <Link href="/" className="brand" data-testid="link-brand"><span className="brand-mark" aria-hidden="true">G</span><span>glimmr</span></Link>;
+@@ -113,7 +115,7 @@ export function TimelineStep({ step, index, onEdit, onReplace, onDelete }: { ste
+     <div className="timeline-info">
+       <h3>{step.place.name}</h3>
+       <p>{step.place.category} · {step.place.address}</p>
+-      <div className="timeline-meta"><span>{step.arrival}</span><span>{step.durationMinutes} min here</span><span>{step.place.price ? formatINR(step.place.price) : 'free'}</span></div>
++      <div className="timeline-meta"><span>{step.arrival}</span><span>{step.durationMinutes} min here</span><span>{placePrice(step.place) ? formatINR(placePrice(step.place)) : 'free'}</span></div>
+       {step.note && <p style={{ marginTop: 9, color: '#2563eb' }}>{step.note}</p>}
+     </div>
+     <div className="timeline-actions">
+@@ -127,29 +129,54 @@ export function TimelineStep({ step, index, onEdit, onReplace, onDelete }: { ste
+ type EditValue = { kind: 'place' | 'duration' | 'instruction'; value: string };
+ 
+ export function EditDialog({ step, mode, onClose, onSave }: { step?: PlanStep; mode: 'edit' | 'replace' | 'add'; onClose: () => void; onSave: (value: EditValue) => void }) {
+-  const replaceOptions = ['p-ritual', 'p-dolores', 'p-delfina', 'p-foreign', 'p-mina', 'p-copper'];
+-  const addCategories = ['Food', 'Cafe', 'Activity', 'Chill', 'Shopping', 'Custom'];
++  // Same category as the stop being replaced, so a coffee stop swaps for
++  // another coffee stop rather than a random category jump.
++  const replaceOptions = step ? places.filter((place) => place.category === step.place.category && place.id !== step.place.id).slice(0, 6) : [];
++  const addCategories = ['Food', 'Cafe', 'Dessert', 'Activity', 'Drinks', 'Custom'];
+   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+   const instructionId = mode === 'edit' ? 'edit-instruction' : 'place-instruction';
+   const dialogRef = useRef<HTMLElement>(null);
++  // Matches the .dialog-backdrop / .dialog bottom-sheet breakpoint in index.css exactly.
++  const isSheetLayout = useMatchMedia('(max-width: 600px)');
++  const reducedMotion = usePrefersReducedMotion();
+   useEffect(() => {
+     dialogRef.current?.querySelector<HTMLElement>('button, input, textarea')?.focus();
+     const handleKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
+     window.addEventListener('keydown', handleKeyDown);
+     return () => window.removeEventListener('keydown', handleKeyDown);
+   }, [onClose]);
+-  return <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+-    <section ref={dialogRef} className="dialog" role="dialog" aria-modal="true" aria-labelledby="edit-dialog-title" aria-describedby="edit-dialog-description">
++  // Desktop: fade + scale + small rise. Mobile: bottom-sheet slide-up.
++  const dialogMotionProps = reducedMotion ? {} : isSheetLayout
++    ? { initial: { opacity: 0, y: '100%' }, animate: { opacity: 1, y: 0 }, exit: { opacity: 0, y: '100%' }, transition: { duration: motionDuration.large, ease } }
++    : { initial: { opacity: 0, scale: 0.96, y: 12 }, animate: { opacity: 1, scale: 1, y: 0 }, exit: { opacity: 0, scale: 0.97, y: 8 }, transition: { duration: motionDuration.content, ease } };
++  return <motion.div
++    className="dialog-backdrop"
++    role="presentation"
++    onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}
++    initial={reducedMotion ? undefined : { opacity: 0 }}
++    animate={reducedMotion ? undefined : { opacity: 1 }}
++    exit={reducedMotion ? undefined : { opacity: 0 }}
++    transition={{ duration: motionDuration.interaction, ease }}
++  >
++    <motion.section
++      ref={dialogRef}
++      className="dialog"
++      role="dialog"
++      aria-modal="true"
++      aria-labelledby="edit-dialog-title"
++      aria-describedby="edit-dialog-description"
++      {...dialogMotionProps}
++    >
+       <div className="dialog-head"><div><h2 id="edit-dialog-title">{mode === 'replace' ? 'Swap this stop' : mode === 'add' ? 'Add a stop' : 'Tune the timing'}</h2><p>{mode === 'replace' ? 'Keep the shape of your plan, change the feeling.' : mode === 'add' ? 'One more good idea, added to the route.' : 'Make a little room without starting over.'}</p></div><button className="btn btn-icon btn-ghost" onClick={onClose} aria-label="Close dialog" data-testid="button-close-dialog"><X size={18} /></button></div>
+       <p id="edit-dialog-description" className="sr-only">Choose a structured change or add a custom instruction. Your plan will recalculate after saving.</p>
+        {mode === 'edit' && <div className="field"><label htmlFor="duration">Time at stop (minutes)</label><input id="duration" className="input" type="number" defaultValue={step?.durationMinutes ?? 30} min="10" max="180" onKeyDown={(event) => { if (event.key === 'Enter') onSave({ kind: 'duration', value: (event.target as HTMLInputElement).value }); }} /></div>}
+       {mode === 'edit' && <div className="quick-edits"><span className="field-label">Quick changes</span><div className="choice-grid"><button type="button" className="choice" onClick={() => onSave({ kind: 'instruction', value: 'Make it cheaper' })}>Make it cheaper</button><button type="button" className="choice" onClick={() => onSave({ kind: 'instruction', value: 'Choose something farther' })}>Choose something farther</button><button type="button" className="choice" onClick={() => onSave({ kind: 'instruction', value: 'Change category' })}>Change category</button></div></div>}
+-       {mode === 'replace' && <div className="choice-grid">{replaceOptions.map((id) => { const place = places.find((item) => item.id === id); return <button type="button" key={id} className="choice" onClick={() => onSave({ kind: 'place', value: id })} data-testid={`button-option-${id}`}>{place?.name ?? id}</button>; })}</div>}
+-        {mode === 'add' && <div className="add-stop-picker"><span className="field-label">What kind of stop?</span><div className="choice-grid">{addCategories.map((category) => <button type="button" key={category} className={`choice ${selectedCategory === category ? 'selected' : ''}`} onClick={() => setSelectedCategory(category)} data-testid={`button-add-category-${category.toLowerCase()}`}>{category}</button>)}</div>{selectedCategory && selectedCategory !== 'Custom' && <div className="candidate-list"><span className="field-label">Mocked candidates for {selectedCategory.toLowerCase()}</span><div className="choice-grid">{places.filter((place) => { const category = place.category.toLowerCase(); if (selectedCategory === 'Food') return category.includes('dinner') || category.includes('snack'); if (selectedCategory === 'Cafe') return category.includes('coffee'); if (selectedCategory === 'Activity') return category.includes('outdoor'); if (selectedCategory === 'Chill') return category.includes('drink') || category.includes('outdoor'); if (selectedCategory === 'Shopping') return category.includes('snack'); return false; }).map((place) => <button type="button" key={place.id} className="choice" onClick={() => onSave({ kind: 'place', value: place.id })} data-testid={`button-candidate-${place.id}`}>{place.name}</button>)}</div></div>}{selectedCategory === 'Custom' && <p className="muted add-stop-note">Use the instruction below to describe a custom stop. The backend can replace this mocked candidate list later.</p>}</div>}
++       {mode === 'replace' && (replaceOptions.length ? <div className="choice-grid">{replaceOptions.map((place) => <button type="button" key={place.id} className="choice" onClick={() => onSave({ kind: 'place', value: place.id })} data-testid={`button-option-${place.id}`}>{place.name}</button>)}</div> : <p className="muted">No other {step?.place.category.toLowerCase()} spots in this area yet — try a custom instruction below.</p>)}
++        {mode === 'add' && <div className="add-stop-picker"><span className="field-label">What kind of stop?</span><div className="choice-grid">{addCategories.map((category) => <button type="button" key={category} className={`choice ${selectedCategory === category ? 'selected' : ''}`} onClick={() => setSelectedCategory(category)} data-testid={`button-add-category-${category.toLowerCase()}`}>{category}</button>)}</div>{selectedCategory && selectedCategory !== 'Custom' && <div className="candidate-list"><span className="field-label">Candidates for {selectedCategory.toLowerCase()}</span><div className="choice-grid">{places.filter((place) => { if (selectedCategory === 'Food') return place.category === 'Dinner'; return place.category === selectedCategory; }).map((place) => <button type="button" key={place.id} className="choice" onClick={() => onSave({ kind: 'place', value: place.id })} data-testid={`button-candidate-${place.id}`}>{place.name}</button>)}</div></div>}{selectedCategory === 'Custom' && <p className="muted add-stop-note">Use the instruction below to describe a custom stop.</p>}</div>}
+        <div className="field instruction-field"><label htmlFor={instructionId}>Custom instruction <span className="muted">optional</span></label><textarea id={instructionId} className="input" placeholder={mode === 'add' ? 'A bakery, a gallery, somewhere quiet...' : 'Make it cheaper, go farther, keep it outdoors...'} rows={3} /></div>
+        <div className="dialog-actions"><button className="btn btn-soft" onClick={onClose} data-testid="button-cancel-dialog">Cancel</button>{mode === 'edit' && <button className="btn btn-blue" onClick={() => { const input = document.getElementById('duration') as HTMLInputElement; onSave({ kind: 'duration', value: input.value }); }} data-testid="button-save-dialog">Save changes <Check size={15} /></button>}{mode !== 'edit' && <button className="btn btn-blue" onClick={() => { const input = document.getElementById(instructionId) as HTMLTextAreaElement; if (input.value.trim()) onSave({ kind: 'instruction', value: input.value.trim() }); }} data-testid="button-save-instruction">Use instruction <Check size={15} /></button>}</div>
+-    </section>
+-  </div>;
++    </motion.section>
++  </motion.div>;
+ }
+ 
+ export function EmptyState({ onReset }: { onReset: () => void }) {
+diff --git a/artifacts/glimmr/src/components/motion/PageTransition.tsx b/artifacts/glimmr/src/components/motion/PageTransition.tsx
+new file mode 100644
+index 0000000..9a96eb6
+--- /dev/null
++++ b/artifacts/glimmr/src/components/motion/PageTransition.tsx
+@@ -0,0 +1,26 @@
++import { type ReactNode } from 'react';
++import { motion } from 'framer-motion';
++import { duration, ease, usePrefersReducedMotion } from '@/lib/motion';
++
++/**
++ * Entrance-only page transition, keyed by route location in App.tsx.
++ * Deliberately skips exit animation: wouter swaps the matched route the
++ * moment location changes, so an old page has already unmounted by the time
++ * an exit animation could run without a location-snapshot dance. A clean,
++ * fast entrance gets most of the perceived polish without that fragility or
++ * any risk of a blank-screen flash between routes.
++ */
++export function PageTransition({ children, routeKey }: { children: ReactNode; routeKey: string }) {
++  const reducedMotion = usePrefersReducedMotion();
++  if (reducedMotion) return <>{children}</>;
++  return (
++    <motion.div
++      key={routeKey}
++      initial={{ opacity: 0, y: 8 }}
++      animate={{ opacity: 1, y: 0 }}
++      transition={{ duration: duration.large, ease }}
++    >
++      {children}
++    </motion.div>
++  );
++}
+diff --git a/artifacts/glimmr/src/components/motion/Stagger.tsx b/artifacts/glimmr/src/components/motion/Stagger.tsx
+new file mode 100644
+index 0000000..6d7859d
+--- /dev/null
++++ b/artifacts/glimmr/src/components/motion/Stagger.tsx
+@@ -0,0 +1,30 @@
++import { type ReactNode } from 'react';
++import { motion, type Variants } from 'framer-motion';
++import { duration, ease, fadeUp, staggerContainer, usePrefersReducedMotion } from '@/lib/motion';
++
++// Slightly more presence for a single highlighted item (e.g. the "Best fit"
++// plan card) — small scale-up added on top of the standard fadeUp.
++const fadeUpStrong: Variants = {
++  hidden: { opacity: 0, y: 14, scale: 0.98 },
++  show: { opacity: 1, y: 0, scale: 1, transition: { duration: duration.content, ease } },
++};
++
++export function StaggerContainer({ children, className }: { children: ReactNode; className?: string }) {
++  const reducedMotion = usePrefersReducedMotion();
++  if (reducedMotion) return <div className={className}>{children}</div>;
++  return (
++    <motion.div className={className} variants={staggerContainer} initial="hidden" animate="show">
++      {children}
++    </motion.div>
++  );
++}
++
++export function StaggerItem({ children, className, strong = false }: { children: ReactNode; className?: string; strong?: boolean }) {
++  const reducedMotion = usePrefersReducedMotion();
++  if (reducedMotion) return <div className={className}>{children}</div>;
++  return (
++    <motion.div className={className} variants={strong ? fadeUpStrong : fadeUp}>
++      {children}
++    </motion.div>
++  );
++}
+diff --git a/artifacts/glimmr/src/components/motion/ValueTransition.tsx b/artifacts/glimmr/src/components/motion/ValueTransition.tsx
+new file mode 100644
+index 0000000..4ba34ab
+--- /dev/null
++++ b/artifacts/glimmr/src/components/motion/ValueTransition.tsx
+@@ -0,0 +1,34 @@
++import { AnimatePresence, motion } from 'framer-motion';
++import { duration, ease, usePrefersReducedMotion } from '@/lib/motion';
++
++/**
++ * Crossfades a formatted value (already-formatted strings like "₹620" or
++ * "3h 20m") when it changes, keyed on the string itself. Used for plan-math
++ * values that update after an edit/replace/delete/add/regenerate.
++ *
++ * Deliberately takes pre-formatted strings rather than animating the raw
++ * number: GLIMMR's values carry units and formatting (₹, "m", "km") that a
++ * numeric tween would need to reconstruct anyway, and a short slide+fade
++ * reads as clearly as counting through intermediate values for these small,
++ * infrequent deltas.
++ */
++export function ValueTransition({ value, className }: { value: string; className?: string }) {
++  const reducedMotion = usePrefersReducedMotion();
++  if (reducedMotion) return <span className={className}>{value}</span>;
++  return (
++    <span className={className} style={{ display: 'inline-grid', overflow: 'hidden' }}>
++      <AnimatePresence mode="popLayout" initial={false}>
++        <motion.span
++          key={value}
++          initial={{ opacity: 0, y: 10 }}
++          animate={{ opacity: 1, y: 0 }}
++          exit={{ opacity: 0, y: -10, position: 'absolute' }}
++          transition={{ duration: duration.interaction, ease }}
++          style={{ gridArea: '1 / 1' }}
++        >
++          {value}
++        </motion.span>
++      </AnimatePresence>
++    </span>
++  );
++}
+diff --git a/artifacts/glimmr/src/components/route-three.tsx b/artifacts/glimmr/src/components/route-three.tsx
+index 06ccea6..20ebc3f 100644
+--- a/artifacts/glimmr/src/components/route-three.tsx
++++ b/artifacts/glimmr/src/components/route-three.tsx
+@@ -1,8 +1,9 @@
+-import { useEffect, useRef, useState } from 'react';
++import { useRef } from 'react';
+ import { Canvas, useFrame } from '@react-three/fiber';
+ import { Float, Line } from '@react-three/drei';
+ import * as THREE from 'three';
+ import { RouteVisual } from '@/components/glimmr-ui';
++import { usePrefersReducedMotion } from '@/lib/motion';
+ 
+ const fullRoute: [number, number, number][] = [
+   [-2.4, 0.85, 0],
+@@ -47,15 +48,7 @@ function RouteScene() {
+ }
+ 
+ function ReducedMotionRoute() {
+-  const [reduced, setReduced] = useState(false);
+-
+-  useEffect(() => {
+-    const query = window.matchMedia('(prefers-reduced-motion: reduce)');
+-    const update = () => setReduced(query.matches);
+-    update();
+-    query.addEventListener('change', update);
+-    return () => query.removeEventListener('change', update);
+-  }, []);
++  const reduced = usePrefersReducedMotion();
+ 
+   if (reduced) return <RouteVisual />;
+ 
+diff --git a/artifacts/glimmr/src/components/text-loop.tsx b/artifacts/glimmr/src/components/text-loop.tsx
+index b436531..a738d44 100644
+--- a/artifacts/glimmr/src/components/text-loop.tsx
++++ b/artifacts/glimmr/src/components/text-loop.tsx
+@@ -1,4 +1,5 @@
+ import { useEffect, useState } from 'react';
++import { usePrefersReducedMotion } from '@/lib/motion';
+ 
+ const phrases = [
+   'Find something good.',
+@@ -10,15 +11,7 @@ const phrases = [
+ 
+ export default function TextLoop() {
+   const [index, setIndex] = useState(0);
+-  const [reducedMotion, setReducedMotion] = useState(false);
+-
+-  useEffect(() => {
+-    const query = window.matchMedia('(prefers-reduced-motion: reduce)');
+-    const update = () => setReducedMotion(query.matches);
+-    update();
+-    query.addEventListener('change', update);
+-    return () => query.removeEventListener('change', update);
+-  }, []);
++  const reducedMotion = usePrefersReducedMotion();
+ 
+   useEffect(() => {
+     if (reducedMotion) return;
+@@ -27,7 +20,12 @@ export default function TextLoop() {
+   }, [reducedMotion]);
+ 
+   return (
+-    <div className="text-loop" aria-live="polite">
++    // aria-hidden: this is decorative rotating marketing copy next to a
++    // static heading that already says the same thing in other words.
++    // Re-announcing a new phrase to screen readers every 3.6s would be
++    // exactly the "continuously announce animated text changes" pattern
++    // the motion spec calls out to avoid.
++    <div className="text-loop" aria-hidden="true">
+       <span className="text-loop-label">right now</span>
+       <span className="text-loop-phrase" key={reducedMotion ? 'static' : phrases[index]}>{phrases[index]}</span>
+     </div>
+diff --git a/artifacts/glimmr/src/data/mockData.ts b/artifacts/glimmr/src/data/mockData.ts
+index 2418df1..f25ef75 100644
+--- a/artifacts/glimmr/src/data/mockData.ts
++++ b/artifacts/glimmr/src/data/mockData.ts
+@@ -1,101 +1,20 @@
+-import type { Outing, Place, Plan, PlannerRequest, PlanStep } from '@/types/glimmr';
++import type { PlannerRequest } from '@/types/glimmr';
++
++export { places, serviceAreas } from '@/data/places';
+ 
+ export const defaultRequest: PlannerRequest = {
+   from: 'Indiranagar',
+   to: 'Church Street',
+   availableMinutes: 180,
+-  budget: 500,
++  // ₹500 (the old placeholder-data default) makes literally every generated
++  // plan infeasible against real Indiranagar prices researched for the seed
++  // data (a sit-down dinner alone can run ₹500-900/person) -- confirmed by
++  // actually running the engine, not assumed. ₹700 keeps "Best value"
++  // comfortably feasible on first load while still honestly showing the
++  // feasibility-warning UX on pricier combinations, instead of hiding it.
++  budget: 700,
+   people: 4,
+   transport: 'transit',
+   outingType: 'Food crawl',
+   preference: 'Good food, somewhere peaceful, and nice for photos.',
+ };
+-
+-export const places: Place[] = [
+-  { id: 'p-ritual', name: 'Blue Tokai Coffee', category: 'Coffee', address: '12th Main, Indiranagar', description: 'A sharp little start with excellent espresso and a sunny window.', price: 160, durationMinutes: 35, coordinates: [18, 28] },
+-  { id: 'p-dolores', name: 'Cubbon Park', category: 'Outdoors', address: 'Kasturba Road, Bengaluru', description: 'A quick reset under the trees with room to wander.', price: 0, durationMinutes: 35, coordinates: [43, 58] },
+-  { id: 'p-delfina', name: 'Toit Brewpub', category: 'Dinner', address: '100 Feet Road, Indiranagar', description: 'Comfort food, a lively room, and a table that turns into an evening.', price: 320, durationMinutes: 70, coordinates: [68, 34] },
+-  { id: 'p-foreign', name: 'The Fatty Bao', category: 'Dinner + small plates', address: '12th Main, Indiranagar', description: 'Bright plates for when the plan deserves a little ceremony.', price: 380, durationMinutes: 85, coordinates: [80, 69] },
+-  { id: 'p-mina', name: 'Miso Market', category: 'Snacks', address: 'CMH Road, Indiranagar', description: 'Small-batch treats and a good excuse to take the long way.', price: 100, durationMinutes: 25, coordinates: [56, 77] },
+-  { id: 'p-copper', name: 'Windmills Craftworks', category: 'Drinks + music', address: 'Whitefield Main Road', description: 'Low lights, good drinks, and no pressure to be anywhere else.', price: 260, durationMinutes: 55, coordinates: [83, 25] },
+-];
+-
+-const makeStep = (id: string, arrival: string, travelMinutes: number, distanceKm: number, note?: string): PlanStep => {
+-  const place = places.find((item) => item.id === id) ?? places[0];
+-  return { id: `step-${id}`, place, arrival, durationMinutes: place.durationMinutes, travelMinutes, distanceKm, note };
+-};
+-
+-export const mockPlans: Plan[] = [
+-  {
+-    id: 'plan-blue-hour',
+-    title: 'Blue hour, on foot',
+-    subtitle: 'Coffee, a park pause, then the pie worth walking for.',
+-    vibe: 'Easy energy',
+-    totalMinutes: 170,
+-    pricePerPerson: 420,
+-    groupTotal: 1680,
+-    totalDistanceKm: 3.4,
+-    travelMinutes: 35,
+-    feasible: true,
+-    recommendationLabel: 'Best fit',
+-    recommendationReason: ['Fits your budget', 'Fits your time', 'Works for your group', 'Matches your preference'],
+-    status: 'idle',
+-    request: defaultRequest,
+-    steps: [
+-      makeStep('p-ritual', '6:00 PM', 0, 0),
+-      makeStep('p-dolores', '6:42 PM', 12, .7, 'Take the leafy side of 12th Main.'),
+-      makeStep('p-delfina', '7:35 PM', 23, 1.4, 'Held back 10 minutes for the table.'),
+-    ],
+-  },
+-  {
+-    id: 'plan-courtyard',
+-    title: 'The courtyard cut',
+-    subtitle: 'One excellent meal, one small detour, plenty of room to linger.',
+-    vibe: 'A little ceremony',
+-    totalMinutes: 165,
+-    pricePerPerson: 490,
+-    groupTotal: 1960,
+-    totalDistanceKm: 2.4,
+-    travelMinutes: 25,
+-    feasible: true,
+-    recommendationLabel: 'Best value',
+-    recommendationReason: ['Keeps spend predictable', 'Leaves time to linger', 'Short, simple route'],
+-    status: 'idle',
+-    request: defaultRequest,
+-    steps: [
+-      makeStep('p-ritual', '6:15 PM', 0, 0),
+-      makeStep('p-mina', '6:58 PM', 14, .6, 'Grab one thing for the walk.'),
+-      makeStep('p-foreign', '7:38 PM', 11, .9),
+-    ],
+-  },
+-  {
+-    id: 'plan-nightcap',
+-    title: 'One more round',
+-    subtitle: 'A quick market browse, dinner, and a very good nightcap.',
+-    vibe: 'Bright to low-lit',
+-    totalMinutes: 195,
+-    pricePerPerson: 600,
+-    groupTotal: 2400,
+-    totalDistanceKm: 2.9,
+-    travelMinutes: 29,
+-    feasible: true,
+-    recommendationLabel: 'Most adventurous',
+-    recommendationReason: ['Adds a new neighborhood', 'More variety across stops', 'Best for a later night'],
+-    status: 'idle',
+-    request: defaultRequest,
+-    steps: [
+-      makeStep('p-mina', '6:30 PM', 0, 0),
+-      makeStep('p-delfina', '7:10 PM', 13, .8),
+-      makeStep('p-copper', '8:35 PM', 16, 1),
+-    ],
+-  },
+-];
+-
+-export const getPlan = (id: string): Plan => mockPlans.find((plan) => plan.id === id) ?? mockPlans[0];
+-export const getOuting = (planId: string): Outing => ({
+-  id: `outing-${planId}`,
+-  planId,
+-  startedAt: new Date().toISOString(),
+-  currentStepId: getPlan(planId).steps[1]?.id ?? getPlan(planId).steps[0].id,
+-  completedStepIds: [getPlan(planId).steps[0]?.id ?? ''],
+-});
+\ No newline at end of file
+diff --git a/artifacts/glimmr/src/data/places.ts b/artifacts/glimmr/src/data/places.ts
+new file mode 100644
+index 0000000..21b2798
+--- /dev/null
++++ b/artifacts/glimmr/src/data/places.ts
+@@ -0,0 +1,208 @@
++import type { Place, ServiceArea } from '@/types/glimmr';
++
++/**
++ * V1 coverage limit (see vision Section 9) — rows, not code branches.
++ * Adding a city or neighborhood later means adding a row here, not touching
++ * the recommendation engine or frontend.
++ */
++export const serviceAreas: ServiceArea[] = [
++  { id: 'indiranagar', name: 'Indiranagar', city: 'Bengaluru', active: true },
++  { id: 'koramangala', name: 'Koramangala', city: 'Bengaluru', active: false },
++  { id: 'church-street', name: 'Church Street', city: 'Bengaluru', active: false },
++];
++
++/**
++ * Real, named Indiranagar places, researched via web search (Sept 2026) —
++ * not invented filler. Two honesty notes, exactly what verificationStatus/
++ * confidence exist to carry:
++ *  - lat/lng are approximate placements within the correct block (100 Feet
++ *    Road, 12th Main, CMH Road etc.), not verified geocodes — good enough
++ *    for relative distance estimates between nearby places, not for turning
++ *    into a real route until Maps integration (Phase 3) replaces them.
++ *  - priceMin/priceMax are rough bands from published guides, not scraped
++ *    live menus — treat as planning estimates, not quotes.
++ * AI never generated any of this; it came from real sources, by design
++ * (vision Section 4 — AI is not the source of truth for place facts).
++ */
++export const places: Place[] = [
++  {
++    id: 'p-blue-tokai', name: 'Blue Tokai Coffee Roasters', serviceArea: 'indiranagar',
++    category: 'Cafe', subcategory: 'Coffee', address: '12th Main Road, HAL 2nd Stage, Indiranagar',
++    description: 'A sharp little start with excellent single-origin espresso and a sunny window seat.',
++    lat: 12.9784, lng: 77.6408, priceMin: 150, priceMax: 300, priceBasis: 'per_person',
++    openingHours: '8:00 AM – 9:00 PM', typicalVisitDuration: 35,
++    suitableFor: ['solo', 'couple', 'friends'], activities: ['coffee', 'peaceful', 'photography'],
++    vibe: 'Bright and unfussy', rating: 4.4, reviewCount: 2100, experienceScore: 0.78,
++    source: 'web-research-2026-09', verificationStatus: 'unverified', lastVerified: '2026-09-14', confidence: 0.7,
++  },
++  {
++    id: 'p-third-wave', name: 'Third Wave Coffee Roasters', serviceArea: 'indiranagar',
++    category: 'Cafe', subcategory: 'Coffee', address: '100 Feet Road, Indiranagar',
++    description: 'Reliable specialty coffee on the main strip — easy to fold into any route.',
++    lat: 12.9779, lng: 77.6397, priceMin: 180, priceMax: 320, priceBasis: 'per_person',
++    openingHours: '8:00 AM – 11:00 PM', typicalVisitDuration: 30,
++    suitableFor: ['solo', 'couple', 'friends'], activities: ['coffee', 'photography'],
++    vibe: 'Casual and central', rating: 4.3, reviewCount: 3400, experienceScore: 0.72,
++    source: 'web-research-2026-09', verificationStatus: 'unverified', lastVerified: '2026-09-14', confidence: 0.7,
++  },
++  {
++    id: 'p-araku', name: 'ARAKU Coffee', serviceArea: 'indiranagar',
++    category: 'Cafe', subcategory: 'Specialty coffee', address: '877, 12th Main Road, HAL 2nd Stage, Indiranagar',
++    description: 'In-house roastery and full menu under one roof — a proper sit-down coffee occasion, not a quick stop.',
++    lat: 12.9788, lng: 77.6415, priceMin: 300, priceMax: 700, priceBasis: 'per_person',
++    openingHours: '9:00 AM – 11:00 PM', typicalVisitDuration: 55,
++    suitableFor: ['couple', 'friends'], activities: ['coffee', 'photography', 'peaceful'],
++    vibe: 'Polished and photogenic', rating: 4.6, reviewCount: 1500, experienceScore: 0.88,
++    source: 'web-research-2026-09', verificationStatus: 'unverified', lastVerified: '2026-09-14', confidence: 0.65,
++  },
++  {
++    id: 'p-lazy-suzy', name: "Lazy Suzy", serviceArea: 'indiranagar',
++    category: 'Cafe', subcategory: 'Brunch', address: '7, 80 Feet Road, HAL 3rd Stage, Indiranagar',
++    description: 'Bungalow-garden brunch spot with a rotating seasonal menu — arrive early on weekends.',
++    lat: 12.9812, lng: 77.6382, priceMin: 400, priceMax: 700, priceBasis: 'per_person',
++    openingHours: '9:00 AM – 11:00 PM', typicalVisitDuration: 60,
++    suitableFor: ['couple', 'friends', 'family'], activities: ['food', 'peaceful', 'photography'],
++    vibe: 'Garden brunch, unhurried', rating: 4.5, reviewCount: 1800, experienceScore: 0.84,
++    source: 'web-research-2026-09', verificationStatus: 'unverified', lastVerified: '2026-09-14', confidence: 0.65,
++  },
++  {
++    id: 'p-corner-house', name: 'Corner House Ice Cream', serviceArea: 'indiranagar',
++    category: 'Dessert', subcategory: 'Ice cream', address: '100 Feet Road, Indiranagar',
++    description: 'Nostalgic Bangalore ice cream parlour since 1982 — Death by Chocolate is the whole point.',
++    lat: 12.9776, lng: 77.6401, priceMin: 150, priceMax: 300, priceBasis: 'per_person',
++    openingHours: '11:00 AM – 11:30 PM', typicalVisitDuration: 25,
++    suitableFor: ['solo', 'couple', 'friends', 'family'], activities: ['food', 'chill'],
++    vibe: 'Classic and cheerful', rating: 4.4, reviewCount: 5200, experienceScore: 0.75,
++    source: 'web-research-2026-09', verificationStatus: 'unverified', lastVerified: '2026-09-14', confidence: 0.75,
++  },
++  {
++    id: 'p-toit', name: 'Toit Brewpub', serviceArea: 'indiranagar',
++    category: 'Dinner', subcategory: 'Brewpub', address: '298, 100 Feet Road, Indiranagar',
++    description: "Bangalore's best-known microbrewery — comfort food, craft beer, and a room that turns into an evening.",
++    lat: 12.9775, lng: 77.6404, priceMin: 400, priceMax: 900, priceBasis: 'per_person',
++    openingHours: '12:00 PM – 11:30 PM', typicalVisitDuration: 75,
++    suitableFor: ['friends', 'couple'], activities: ['food', 'drinks'],
++    vibe: 'Lively and loud', rating: 4.5, reviewCount: 8900, experienceScore: 0.85,
++    source: 'web-research-2026-09', verificationStatus: 'unverified', lastVerified: '2026-09-14', confidence: 0.7,
++  },
++  {
++    id: 'p-sly-granny', name: 'Sly Granny', serviceArea: 'indiranagar',
++    category: 'Dinner', subcategory: 'Bar & kitchen', address: '100 Feet Road, Indiranagar',
++    description: 'Playful modern-Indian small plates with a strong cocktail list.',
++    lat: 12.9781, lng: 77.6399, priceMin: 500, priceMax: 1000, priceBasis: 'per_person',
++    openingHours: '12:00 PM – 1:00 AM', typicalVisitDuration: 80,
++    suitableFor: ['couple', 'friends'], activities: ['food', 'drinks', 'photography'],
++    vibe: 'Playful, a little dressy', rating: 4.4, reviewCount: 4100, experienceScore: 0.8,
++    source: 'web-research-2026-09', verificationStatus: 'unverified', lastVerified: '2026-09-14', confidence: 0.65,
++  },
++  {
++    id: 'p-monkey-bar', name: 'Monkey Bar', serviceArea: 'indiranagar',
++    category: 'Drinks', subcategory: 'Gastropub', address: '100 Feet Road, Indiranagar',
++    description: 'Contemporary Indian gastropub — reliable pick for a proper night out with a group.',
++    lat: 12.9770, lng: 77.6407, priceMin: 500, priceMax: 1000, priceBasis: 'per_person',
++    openingHours: '12:00 PM – 1:00 AM', typicalVisitDuration: 75,
++    suitableFor: ['friends', 'couple'], activities: ['food', 'drinks'],
++    vibe: 'Buzzy, a proper night out', rating: 4.3, reviewCount: 6200, experienceScore: 0.79,
++    source: 'web-research-2026-09', verificationStatus: 'unverified', lastVerified: '2026-09-14', confidence: 0.65,
++  },
++  {
++    id: 'p-bobs-bar', name: "Bob's Bar", serviceArea: 'indiranagar',
++    category: 'Drinks', subcategory: 'Casual bar', address: 'CMH Road, Indiranagar',
++    description: 'No-frills neighbourhood bar — good for a low-key drink without a scene.',
++    lat: 12.9765, lng: 77.6421, priceMin: 300, priceMax: 600, priceBasis: 'per_person',
++    openingHours: '12:00 PM – 11:30 PM', typicalVisitDuration: 60,
++    suitableFor: ['friends'], activities: ['drinks', 'chill'],
++    vibe: 'Unpretentious', rating: 4.1, reviewCount: 1900, experienceScore: 0.6,
++    source: 'web-research-2026-09', verificationStatus: 'unverified', lastVerified: '2026-09-14', confidence: 0.55,
++  },
++  {
++    id: 'p-equilibrium', name: 'Equilibrium Climbing Station', serviceArea: 'indiranagar',
++    category: 'Activity', subcategory: 'Climbing', address: 'Indiranagar, Bengaluru',
++    description: "Indoor bouldering gym — a genuinely different kind of stop for a group that wants to move.",
++    lat: 12.9750, lng: 77.6390, priceMin: 400, priceMax: 700, priceBasis: 'per_person',
++    openingHours: '7:00 AM – 10:00 PM', typicalVisitDuration: 90,
++    suitableFor: ['friends', 'solo'], activities: ['active', 'adventurous'],
++    vibe: 'Energetic', rating: 4.6, reviewCount: 900, experienceScore: 0.8,
++    source: 'web-research-2026-09', verificationStatus: 'unverified', lastVerified: '2026-09-14', confidence: 0.55,
++  },
++  {
++    id: 'p-escape-hunt', name: 'Escape Hunt Indiranagar', serviceArea: 'indiranagar',
++    category: 'Activity', subcategory: 'Escape room', address: 'Near Sony Signal, Indiranagar',
++    description: 'A step up from a standard escape room — good group activity with a built-in story.',
++    lat: 12.9760, lng: 77.6412, priceMin: 600, priceMax: 900, priceBasis: 'per_person',
++    openingHours: '11:00 AM – 9:00 PM', typicalVisitDuration: 75,
++    suitableFor: ['friends'], activities: ['active', 'adventurous'],
++    vibe: 'Playful and tense', rating: 4.5, reviewCount: 700, experienceScore: 0.77,
++    source: 'web-research-2026-09', verificationStatus: 'unverified', lastVerified: '2026-09-14', confidence: 0.55,
++  },
++  {
++    id: 'p-lahe-lahe', name: 'Lahe Lahe', serviceArea: 'indiranagar',
++    category: 'Culture', subcategory: 'Art & poetry space', address: 'Indiranagar, Bengaluru',
++    description: 'Community art and poetry space with regular workshops and open mics — quiet during the day, alive at night.',
++    lat: 12.9795, lng: 77.6385, priceMin: 200, priceMax: 500, priceBasis: 'per_person',
++    openingHours: '11:00 AM – 11:00 PM', typicalVisitDuration: 60,
++    suitableFor: ['solo', 'couple', 'friends'], activities: ['culture', 'peaceful', 'art'],
++    vibe: 'Artsy and low-key', rating: 4.5, reviewCount: 600, experienceScore: 0.75,
++    source: 'web-research-2026-09', verificationStatus: 'unverified', lastVerified: '2026-09-14', confidence: 0.5,
++  },
++  {
++    id: 'p-ranga-shankara-walk', name: '100 Feet Road Street Art Walk', serviceArea: 'indiranagar',
++    category: 'Outdoor', subcategory: 'Walk', address: '100 Feet Road, Indiranagar',
++    description: 'A free, self-guided stretch of murals and street art along the main road — an easy, photogenic pause between stops.',
++    lat: 12.9790, lng: 77.6400, priceMin: 0, priceMax: 0, priceBasis: 'flat',
++    openingHours: 'Always open', typicalVisitDuration: 25,
++    suitableFor: ['solo', 'couple', 'friends'], activities: ['outdoor', 'photography', 'peaceful', 'free'],
++    vibe: 'Open-air and free', rating: 4.2, reviewCount: 300, experienceScore: 0.6,
++    source: 'web-research-2026-09', verificationStatus: 'unverified', lastVerified: '2026-09-14', confidence: 0.5,
++  },
++  {
++    id: 'p-glens-bakehouse', name: "Glen's Bakehouse", serviceArea: 'indiranagar',
++    category: 'Cafe', subcategory: 'Bakery', address: '297, 100 Feet Road, Indiranagar',
++    description: 'Bakes and a vibrant, dance-friendly outdoor section — good for a laid-back afternoon.',
++    lat: 12.9773, lng: 77.6395, priceMin: 250, priceMax: 500, priceBasis: 'per_person',
++    openingHours: '8:00 AM – 11:00 PM', typicalVisitDuration: 40,
++    suitableFor: ['friends', 'couple'], activities: ['food', 'chill'],
++    vibe: 'Relaxed, a little loud', rating: 4.3, reviewCount: 2200, experienceScore: 0.7,
++    source: 'web-research-2026-09', verificationStatus: 'unverified', lastVerified: '2026-09-14', confidence: 0.6,
++  },
++  {
++    id: 'p-smoke-house-deli', name: 'Smoke House Deli', serviceArea: 'indiranagar',
++    category: 'Dinner', subcategory: 'Continental', address: '100 Feet Road, Indiranagar',
++    description: 'Dependable continental menu in a bright, plant-filled room — an easy choice for mixed group preferences.',
++    lat: 12.9768, lng: 77.6398, priceMin: 500, priceMax: 900, priceBasis: 'per_person',
++    openingHours: '11:00 AM – 11:30 PM', typicalVisitDuration: 70,
++    suitableFor: ['friends', 'family', 'couple'], activities: ['food', 'photography'],
++    vibe: 'Bright and easy', rating: 4.3, reviewCount: 3800, experienceScore: 0.74,
++    source: 'web-research-2026-09', verificationStatus: 'unverified', lastVerified: '2026-09-14', confidence: 0.6,
++  },
++  {
++    id: 'p-milano-gelato', name: 'Milano Ice Cream', serviceArea: 'indiranagar',
++    category: 'Dessert', subcategory: 'Gelato', address: '12th Main Road, Indiranagar',
++    description: 'Italian-style gelato — a light, quick stop that fits almost anywhere in a route.',
++    lat: 12.9800, lng: 77.6410, priceMin: 150, priceMax: 300, priceBasis: 'per_person',
++    openingHours: '11:00 AM – 11:00 PM', typicalVisitDuration: 20,
++    suitableFor: ['solo', 'couple', 'friends', 'family'], activities: ['food', 'chill'],
++    vibe: 'Quick and sweet', rating: 4.2, reviewCount: 1400, experienceScore: 0.65,
++    source: 'web-research-2026-09', verificationStatus: 'unverified', lastVerified: '2026-09-14', confidence: 0.55,
++  },
++  {
++    id: 'p-taco-street', name: 'Taco Street', serviceArea: 'indiranagar',
++    category: 'Dinner', subcategory: 'Mexican', address: 'Indiranagar, Bengaluru',
++    description: 'Budget-friendly street tacos — good for a casual, inexpensive food stop.',
++    lat: 12.9758, lng: 77.6403, priceMin: 200, priceMax: 400, priceBasis: 'per_person',
++    openingHours: '12:00 PM – 11:00 PM', typicalVisitDuration: 40,
++    suitableFor: ['friends', 'solo'], activities: ['food'],
++    vibe: 'Casual, budget-friendly', rating: 4.3, reviewCount: 1100, experienceScore: 0.68,
++    source: 'web-research-2026-09', verificationStatus: 'unverified', lastVerified: '2026-09-14', confidence: 0.5,
++  },
++  {
++    id: 'p-hole-in-wall', name: 'Hole in the Wall Cafe', serviceArea: 'indiranagar',
++    category: 'Cafe', subcategory: 'All-day cafe', address: 'Indiranagar, Bengaluru',
++    description: 'A neighbourhood favourite — quieter than the main-road spots, easy to linger in.',
++    lat: 12.9805, lng: 77.6392, priceMin: 200, priceMax: 450, priceBasis: 'per_person',
++    openingHours: '8:00 AM – 11:00 PM', typicalVisitDuration: 40,
++    suitableFor: ['solo', 'couple', 'friends'], activities: ['coffee', 'peaceful', 'food'],
++    vibe: 'Quiet neighbourhood favourite', rating: 4.4, reviewCount: 1600, experienceScore: 0.73,
++    source: 'web-research-2026-09', verificationStatus: 'unverified', lastVerified: '2026-09-14', confidence: 0.55,
++  },
++];
+diff --git a/artifacts/glimmr/src/index.css b/artifacts/glimmr/src/index.css
+index 9279f1b..799724d 100644
+--- a/artifacts/glimmr/src/index.css
++++ b/artifacts/glimmr/src/index.css
+@@ -95,6 +95,7 @@
+ .nav-links a { color: inherit; text-decoration: none; transition: color .2s ease; }
+ .nav-links a:hover { color: hsl(var(--foreground)); }
+ .btn { min-height: 44px; display: inline-flex; justify-content: center; align-items: center; gap: 9px; border: 0; border-radius: 999px; padding: 0 19px; font-size: .83rem; font-weight: 800; cursor: pointer; text-decoration: none; transition: transform .2s ease, background-color .2s ease, color .2s ease; }
++.btn:active { transform: scale(.97); transition-duration: .1s; }
+ .btn:hover { transform: translateY(-2px); }
+ .btn-primary { background: #111; color: #fff; box-shadow: 0 8px 20px rgb(17 17 17 / .13); }
+ .btn-primary:hover { background: hsl(var(--primary)); }
+@@ -166,7 +167,8 @@
+ .section-heading { max-width: 620px; margin-bottom: 44px; }
+ .section-heading h2 { font-size: clamp(2.3rem, 5vw, 4rem); line-height: 1; margin: 12px 0 14px; }
+ .feature-grid { display: grid; grid-template-columns: 1.3fr .7fr .9fr; gap: 14px; }
+-.feature-card { min-height: 270px; padding: 27px; display: flex; flex-direction: column; justify-content: space-between; }
++.feature-card { min-height: 270px; padding: 27px; display: flex; flex-direction: column; justify-content: space-between; transition: transform .22s ease, box-shadow .22s ease; }
++.feature-card:hover { transform: translateY(-3px); box-shadow: 0 16px 34px -20px rgb(17 17 17 / .3); }
+ .feature-card:first-child { background: #111; color: #fff; }
+ .feature-card:nth-child(2) { background: #dfeaff; }
+ .feature-card:nth-child(3) { background: #fbbf24; }
+@@ -202,7 +204,9 @@
+ .field-error { display: block; margin-top: 7px; font-size: .7rem; font-weight: 700; }
+ textarea.input { padding-top: 13px; min-height: 92px; resize: vertical; }
+ .choice-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+-.choice { border: 1px solid hsl(var(--border)); color: hsl(var(--muted-foreground)); background: hsl(var(--card)); border-radius: 999px; padding: 10px 14px; font-size: .78rem; font-weight: 700; cursor: pointer; }
++.choice { border: 1px solid hsl(var(--border)); color: hsl(var(--muted-foreground)); background: hsl(var(--card)); border-radius: 999px; padding: 10px 14px; font-size: .78rem; font-weight: 700; cursor: pointer; transition: background-color .18s ease, border-color .18s ease, color .18s ease, transform .12s ease; }
++.choice:hover { border-color: hsl(var(--foreground) / .3); }
++.choice:active { transform: scale(.96); }
+ .choice.selected { background: #111; border-color: #111; color: #fff; }
+ .planner-aside { position: sticky; top: 20px; padding: 24px; background: #111; color: #fff; border-radius: 24px; overflow: hidden; }
+ .planner-aside::after { content: ''; position: absolute; right: -34px; bottom: -60px; width: 180px; height: 180px; border: 25px solid #3b82f6; border-radius: 50%; opacity: .65; }
+@@ -220,11 +224,12 @@ textarea.input { padding-top: 13px; min-height: 92px; resize: vertical; }
+ .context-pill { padding: 7px 10px; background: hsl(var(--secondary)); border-radius: 999px; font-size: .73rem; font-weight: 700; }
+ .context-pill.blue { color: #2563eb; background: #e3edff; }
+ .plans-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; }
+-.plan-card { overflow: hidden; display: flex; flex-direction: column; }
++.plan-card-slot:nth-child(2) .plan-top { background: #e7efff; color: #111; }
++.plan-card-slot:nth-child(3) .plan-top { background: #fbbf24; color: #111; }
++.plan-card { overflow: hidden; display: flex; flex-direction: column; transition: transform .22s ease, box-shadow .22s ease; }
++.plan-card:hover { transform: translateY(-3px); box-shadow: 0 16px 34px -20px rgb(17 17 17 / .35); }
+ .plan-card.recommended { border: 2px solid #3b82f6; }
+ .plan-top { background: #111; color: #fff; min-height: 155px; padding: 22px; position: relative; }
+-.plan-card:nth-child(2) .plan-top { background: #e7efff; color: #111; }
+-.plan-card:nth-child(3) .plan-top { background: #fbbf24; color: #111; }
+ .recommend-label { position: absolute; top: 17px; right: 17px; color: #fff; background: #3b82f6; border-radius: 999px; padding: 6px 9px; font: 500 .62rem var(--app-font-mono); text-transform: uppercase; }
+ .plan-top h2 { margin: 20px 0 4px; font: 700 1.5rem var(--app-font-display); letter-spacing: -.045em; }
+ .plan-top p { opacity: .65; margin: 0; font-size: .75rem; }
+diff --git a/artifacts/glimmr/src/lib/glimmr-format.ts b/artifacts/glimmr/src/lib/glimmr-format.ts
+index 6991104..ac43907 100644
+--- a/artifacts/glimmr/src/lib/glimmr-format.ts
++++ b/artifacts/glimmr/src/lib/glimmr-format.ts
+@@ -13,3 +13,15 @@ export function formatDuration(minutes: number) {
+   if (!remainingMinutes) return `${hours} hr${hours === 1 ? '' : 's'}`;
+   return `${hours}h ${remainingMinutes}m`;
+ }
++
++/**
++ * Representative per-person price for a Place, for display and for the
++ * recommendation engine's budget-fit scoring. MVP assumption: every seeded
++ * place uses per_person or flat pricing (no per_group places yet), so the
++ * midpoint of priceMin/priceMax is a fair single number to show and compare.
++ * Revisit this once per_group places exist — a group total shouldn't be
++ * divided by nobody.
++ */
++export function placePrice(place: { priceMin: number; priceMax: number }) {
++  return Math.round((place.priceMin + place.priceMax) / 2);
++}
+diff --git a/artifacts/glimmr/src/lib/motion.ts b/artifacts/glimmr/src/lib/motion.ts
+new file mode 100644
+index 0000000..891ca45
+--- /dev/null
++++ b/artifacts/glimmr/src/lib/motion.ts
+@@ -0,0 +1,77 @@
++import { useEffect, useState } from 'react';
++import type { Transition, Variants } from 'framer-motion';
++
++/**
++ * Central motion tokens for GLIMMR.
++ * Keep every animated component reading from here so timing stays consistent
++ * across the app instead of being re-guessed per component.
++ */
++export const duration = {
++  micro: 0.15, // hover/press feedback
++  interaction: 0.22, // choice pills, small state toggles
++  content: 0.36, // cards, dialogs, list add/remove
++  large: 0.55, // page transitions, sheets
++} as const;
++
++export const ease = [0.16, 1, 0.3, 1] as const; // calm, decisive ease-out
++
++export const springSnappy: Transition = { type: 'spring', stiffness: 420, damping: 34, mass: 0.7 };
++
++/** Fade + small rise. The default entrance for content that appears in place. */
++export const fadeUp: Variants = {
++  hidden: { opacity: 0, y: 10 },
++  show: { opacity: 1, y: 0, transition: { duration: duration.content, ease } },
++  exit: { opacity: 0, y: -6, transition: { duration: duration.interaction, ease } },
++};
++
++/** Scale-in for dialogs and cards that need slightly more presence than a fade. */
++export const scaleIn: Variants = {
++  hidden: { opacity: 0, scale: 0.97 },
++  show: { opacity: 1, scale: 1, transition: { duration: duration.content, ease } },
++  exit: { opacity: 0, scale: 0.98, transition: { duration: duration.interaction, ease } },
++};
++
++/** Stagger container: apply to a list wrapper, pair with fadeUp/StaggerItem children. */
++export const staggerContainer: Variants = {
++  hidden: {},
++  show: { transition: { staggerChildren: 0.08, delayChildren: 0.04 } },
++};
++
++/**
++ * One shared reduced-motion source of truth. glimmr-preloader, text-loop and
++ * route-three each used to poll matchMedia themselves — this replaces that
++ * duplication without changing their behavior.
++ */
++/** Generic matchMedia hook, SSR-safe. Used where a component's JS-driven
++ * animation choice needs to line up with an existing CSS breakpoint exactly
++ * (e.g. the dialog's mobile bottom-sheet layout, defined at 600px in
++ * index.css) rather than the app's general 768px mobile hook. */
++export function useMatchMedia(query: string) {
++  const [matches, setMatches] = useState(() => (typeof window !== 'undefined' ? window.matchMedia(query).matches : false));
++
++  useEffect(() => {
++    const mql = window.matchMedia(query);
++    const update = () => setMatches(mql.matches);
++    update();
++    mql.addEventListener('change', update);
++    return () => mql.removeEventListener('change', update);
++  }, [query]);
++
++  return matches;
++}
++
++export function usePrefersReducedMotion() {
++  const [reduced, setReduced] = useState(() =>
++    typeof window !== 'undefined' ? window.matchMedia('(prefers-reduced-motion: reduce)').matches : false,
++  );
++
++  useEffect(() => {
++    const query = window.matchMedia('(prefers-reduced-motion: reduce)');
++    const update = () => setReduced(query.matches);
++    update();
++    query.addEventListener('change', update);
++    return () => query.removeEventListener('change', update);
++  }, []);
++
++  return reduced;
++}
+diff --git a/artifacts/glimmr/src/lib/recommendationEngine.ts b/artifacts/glimmr/src/lib/recommendationEngine.ts
+new file mode 100644
+index 0000000..9be4376
+--- /dev/null
++++ b/artifacts/glimmr/src/lib/recommendationEngine.ts
+@@ -0,0 +1,318 @@
++import type { OutingType, Place, Plan, PlannerRequest, PlanStep, TransportMode } from '@/types/glimmr';
++import { placePrice, formatINR } from '@/lib/glimmr-format';
++import { serviceAreas } from '@/data/places';
++
++/**
++ * ============================================================================
++ * GLIMMR recommendation engine
++ * ============================================================================
++ * Deterministic and explainable by design (vision Section 11): same request
++ * + same data always produces the same plans, and every plan carries the
++ * reasons it was picked. This file is the one place scoring weights live —
++ * they are hypotheses, meant to be tuned, not scattered through the app.
++ *
++ * Responsibility boundary (vision Section 17): this module answers "which
++ * combination fits the user" using facts it's given. It never invents a
++ * place, price, or opening hour — those come from data/places.ts. Distance
++ * is approximated with straight-line geometry (see estimateTravel below)
++ * as an explicit, isolated stand-in for a real maps-service (Phase 3);
++ * swapping in a real routing API later means changing that one function.
++ * ============================================================================
++ */
++
++export const scoringWeights = {
++  budgetFit: 0.25,
++  preferenceMatch: 0.25,
++  experienceQuality: 0.2,
++  groupFit: 0.15,
++  activityFit: 0.15,
++};
++
++const OUTING_TYPE_TAGS: Record<OutingType, string[]> = {
++  'Food crawl': ['food'],
++  'Low-key day': ['peaceful', 'chill'],
++  'Date night': ['drinks', 'photography'],
++  'Arts & culture': ['culture', 'art'],
++  'Fresh air': ['outdoor', 'active'],
++};
++
++// Standing in for the NLP layer (vision Section 4/7): free text in, tags
++// out. This never returns anything but tags — it cannot represent a place,
++// price, or plan, which is what keeps the AI/data boundary real rather than
++// aspirational once a real LLM call replaces this keyword match.
++const PREFERENCE_TAG_KEYWORDS: Record<string, string[]> = {
++  peaceful: ['peaceful', 'quiet', 'calm', 'chill'],
++  food: ['food', 'eat', 'dinner', 'lunch', 'breakfast', 'hungry', 'meal'],
++  photography: ['photo', 'instagram', 'pictures', 'aesthetic'],
++  coffee: ['coffee', 'cafe', 'caffeine'],
++  outdoor: ['outdoor', 'park', 'fresh air', 'walk', 'outside'],
++  drinks: ['drink', 'beer', 'cocktail', 'bar', 'wine'],
++  culture: ['art', 'theatre', 'culture', 'museum', 'poetry'],
++  active: ['active', 'adventure', 'sport', 'climb'],
++};
++
++export function parsePreferenceTags(preference?: string): string[] {
++  if (!preference) return [];
++  const text = preference.toLowerCase();
++  return Object.entries(PREFERENCE_TAG_KEYWORDS)
++    .filter(([, keywords]) => keywords.some((keyword) => text.includes(keyword)))
++    .map(([tag]) => tag);
++}
++
++// Rough planning speeds (km/h), not live traffic data — a deliberate,
++// isolated approximation. See module header.
++const TRANSPORT_SPEED_KMH: Record<TransportMode, number> = {
++  walk: 4.5,
++  bike: 13,
++  transit: 17,
++  drive: 20,
++};
++
++function haversineKm(a: Pick<Place, 'lat' | 'lng'>, b: Pick<Place, 'lat' | 'lng'>): number {
++  const toRad = (deg: number) => (deg * Math.PI) / 180;
++  const earthRadiusKm = 6371;
++  const dLat = toRad(b.lat - a.lat);
++  const dLng = toRad(b.lng - a.lng);
++  const lat1 = toRad(a.lat);
++  const lat2 = toRad(b.lat);
++  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
++  return earthRadiusKm * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
++}
++
++function estimateTravel(from: Pick<Place, 'lat' | 'lng'>, to: Pick<Place, 'lat' | 'lng'>, mode: TransportMode) {
++  const distanceKm = Number(haversineKm(from, to).toFixed(1));
++  const minutes = Math.max(5, Math.round((distanceKm / TRANSPORT_SPEED_KMH[mode]) * 60));
++  return { distanceKm, minutes };
++}
++
++interface ScoredPlace {
++  place: Place;
++  score: number;
++  reasons: string[];
++}
++
++function scorePlace(place: Place, request: PlannerRequest, tags: Set<string>): ScoredPlace {
++  const price = placePrice(place);
++  const budgetFit = price <= request.budget ? 1 : Math.max(0, 1 - (price - request.budget) / request.budget);
++
++  const matchCount = place.activities.filter((activity) => tags.has(activity)).length;
++  const preferenceMatch = tags.size ? matchCount / tags.size : 0.5;
++
++  const experienceQuality = place.experienceScore;
++
++  const wantsIntimate = request.people <= 2;
++  const groupFit = wantsIntimate
++    ? place.suitableFor.includes('couple') || place.suitableFor.includes('solo') ? 1 : 0.6
++    : place.suitableFor.includes('friends') || place.suitableFor.includes('family') ? 1 : 0.6;
++
++  const activityFit = place.activities.some((activity) => tags.has(activity)) ? 1 : 0.5;
++
++  const score =
++    budgetFit * scoringWeights.budgetFit +
++    preferenceMatch * scoringWeights.preferenceMatch +
++    experienceQuality * scoringWeights.experienceQuality +
++    groupFit * scoringWeights.groupFit +
++    activityFit * scoringWeights.activityFit;
++
++  const reasons: string[] = [];
++  if (budgetFit >= 0.85) reasons.push('Fits your budget');
++  if (preferenceMatch >= 0.5) reasons.push('Matches what you asked for');
++  if (experienceQuality >= 0.8) reasons.push('Highly rated experience');
++  if (groupFit === 1) reasons.push('Works for your group');
++
++  return { place, score, reasons };
++}
++
++// Category buckets used to build varied, sensible stop sequences.
++// Deliberately data-driven (matched against real category strings in
++// data/places.ts) rather than hardcoded per-place, so new seeded places
++// slot in automatically by category.
++const BUCKETS: Record<'starter' | 'main' | 'activity' | 'evening', string[]> = {
++  starter: ['Cafe', 'Dessert'],
++  main: ['Dinner'],
++  activity: ['Activity', 'Culture', 'Outdoor'],
++  evening: ['Drinks'],
++};
++
++function bucketOf(place: Place): keyof typeof BUCKETS | null {
++  for (const [bucket, categories] of Object.entries(BUCKETS) as [keyof typeof BUCKETS, string[]][]) {
++    if (categories.includes(place.category)) return bucket;
++  }
++  return null;
++}
++
++// Three distinct stop-sequence templates — this is what makes the 3 results
++// meaningfully different shapes of outing, not 3 shuffles of the same idea.
++// 'sort' controls how each bucket's candidates are ranked before picking:
++// score-based for the general-purpose templates, price-based for the one
++// explicitly promising to be the cheaper option — otherwise "Best value"
++// was just another top-scored pick that happened to have fewer stops.
++const PLAN_TEMPLATES: { label: string; buckets: (keyof typeof BUCKETS)[]; sort: 'score' | 'price' }[] = [
++  { label: 'Best fit', buckets: ['starter', 'main', 'activity'], sort: 'score' },
++  { label: 'Best value', buckets: ['starter', 'main'], sort: 'price' },
++  { label: 'Most adventurous', buckets: ['activity', 'main', 'evening'], sort: 'score' },
++];
++
++const START_TIME_MINUTES = 18 * 60; // 6:00 PM, matches the existing mock's evening-outing framing
++
++function formatOverBudget(price: number, budget: number): string {
++  return formatINR(price - budget);
++}
++
++function formatClock(totalMinutes: number): string {
++  const hour24 = Math.floor(totalMinutes / 60) % 24;
++  const minute = totalMinutes % 60;
++  const hour12 = hour24 % 12 === 0 ? 12 : hour24 % 12;
++  const suffix = hour24 >= 12 ? 'PM' : 'AM';
++  return `${hour12}:${minute.toString().padStart(2, '0')} ${suffix}`;
++}
++
++function buildSteps(sequence: Place[], request: PlannerRequest): PlanStep[] {
++  const steps: PlanStep[] = [];
++  let clock = START_TIME_MINUTES;
++  let previous: Place | null = null;
++  for (const place of sequence) {
++    const travel = previous ? estimateTravel(previous, place, request.transport) : { minutes: 0, distanceKm: 0 };
++    clock += travel.minutes;
++    steps.push({
++      id: `step-${place.id}-${steps.length}`,
++      place,
++      arrival: formatClock(clock),
++      durationMinutes: place.typicalVisitDuration,
++      travelMinutes: travel.minutes,
++      distanceKm: travel.distanceKm,
++    });
++    clock += place.typicalVisitDuration;
++    previous = place;
++  }
++  return steps;
++}
++
++function totalsFor(steps: PlanStep[]) {
++  const pricePerPerson = steps.reduce((sum, step) => sum + placePrice(step.place), 0);
++  const totalMinutes = steps.reduce((sum, step) => sum + step.durationMinutes + step.travelMinutes, 0);
++  const travelMinutes = steps.reduce((sum, step) => sum + step.travelMinutes, 0);
++  const totalDistanceKm = Number(steps.reduce((sum, step) => sum + step.distanceKm, 0).toFixed(1));
++  return { pricePerPerson, totalMinutes, travelMinutes, totalDistanceKm };
++}
++
++function resolveServiceArea(request: PlannerRequest): string {
++  const match = serviceAreas.find(
++    (area) => area.active && (request.from.toLowerCase().includes(area.name.toLowerCase()) || request.to.toLowerCase().includes(area.name.toLowerCase())),
++  );
++  // MVP fallback: default to the first active area rather than returning no
++  // candidates, since V1 only truly covers one active area today.
++  return match?.id ?? serviceAreas.find((area) => area.active)?.id ?? serviceAreas[0].id;
++}
++
++export function generatePlans(request: PlannerRequest, allPlaces: Place[]): Plan[] {
++  const serviceArea = resolveServiceArea(request);
++  const candidates = allPlaces.filter((place) => place.serviceArea === serviceArea);
++
++  const tags = new Set([...parsePreferenceTags(request.preference), ...OUTING_TYPE_TAGS[request.outingType]]);
++  const scored = candidates
++    .map((place) => scorePlace(place, request, tags))
++    .sort((a, b) => b.score - a.score);
++
++  const byBucket = new Map<keyof typeof BUCKETS, ScoredPlace[]>();
++  for (const entry of scored) {
++    const bucket = bucketOf(entry.place);
++    if (!bucket) continue;
++    if (!byBucket.has(bucket)) byBucket.set(bucket, []);
++    byBucket.get(bucket)!.push(entry);
++  }
++
++  const usedPlaceIds = new Set<string>();
++  const plans: Plan[] = [];
++
++  for (const template of PLAN_TEMPLATES) {
++    const chosen: ScoredPlace[] = [];
++    let runningPrice = 0;
++    for (const bucket of template.buckets) {
++      const pool = [...(byBucket.get(bucket) ?? [])];
++      if (template.sort === 'price') pool.sort((a, b) => placePrice(a.place) - placePrice(b.place));
++      // Budget-aware pick: prefer the best-ranked (by this template's sort)
++      // candidate that still fits what's left of the per-person budget.
++      // Falls back to the top-ranked candidate regardless of price rather
++      // than an empty stop — a plan that runs over budget and says so
++      // (via feasibilityNote below) is more useful than a silently
++      // dropped stop.
++      const remaining = request.budget - runningPrice;
++      const unused = pool.filter((entry) => !usedPlaceIds.has(entry.place.id));
++      const withinBudget = unused.find((entry) => placePrice(entry.place) <= remaining);
++      const pick = withinBudget ?? unused[0] ?? pool[0];
++      if (pick) {
++        chosen.push(pick);
++        runningPrice += placePrice(pick.place);
++      }
++    }
++    if (!chosen.length) continue;
++
++    let steps = buildSteps(chosen.map((entry) => entry.place), request);
++    let totals = totalsFor(steps);
++
++    // Feasibility check (vision Section 8): if the full combination doesn't
++    // fit the time window, drop the lowest-scored stop and recheck once,
++    // rather than either silently ignoring the overage or discarding the
++    // whole plan outright.
++    if (totals.totalMinutes > request.availableMinutes && chosen.length > 2) {
++      const trimmed = [...chosen].sort((a, b) => a.score - b.score).slice(1);
++      const trimmedSteps = buildSteps(trimmed.map((entry) => entry.place), request);
++      const trimmedTotals = totalsFor(trimmedSteps);
++      if (trimmedTotals.totalMinutes <= request.availableMinutes) {
++        steps = trimmedSteps;
++        totals = trimmedTotals;
++        chosen.length = 0;
++        chosen.push(...trimmed);
++      }
++    }
++
++    let feasibilityNote: string | undefined;
++    if (totals.totalMinutes > request.availableMinutes) {
++      feasibilityNote = `This plan runs about ${totals.totalMinutes - request.availableMinutes} min over your available time.`;
++    }
++    if (totals.pricePerPerson > request.budget) {
++      feasibilityNote = feasibilityNote
++        ? `${feasibilityNote} It's also ${formatOverBudget(totals.pricePerPerson, request.budget)} over budget per person.`
++        : `This plan runs ${formatOverBudget(totals.pricePerPerson, request.budget)} over your budget per person.`;
++    }
++
++    chosen.forEach((entry) => usedPlaceIds.add(entry.place.id));
++
++    // Reasons are computed from the FINAL combined plan, not the individual
++    // per-place scores above — a place that fit the budget alone doesn't
++    // mean the combination does, and a plan flagged infeasible must never
++    // also claim "fits your budget" (that mismatch was a real bug caught by
++    // actually running this against the seed data, not just typechecking).
++    const reasons: string[] = [];
++    if (totals.pricePerPerson <= request.budget) reasons.push('Fits your budget');
++    if (totals.totalMinutes <= request.availableMinutes) reasons.push('Fits your time');
++    if (chosen.every((entry) => entry.reasons.includes('Works for your group'))) reasons.push('Works for your group');
++    const avgPreferenceMatch = chosen.reduce((sum, entry) => sum + (tags.size ? entry.place.activities.filter((a) => tags.has(a)).length / tags.size : 0), 0) / chosen.length;
++    if (avgPreferenceMatch >= 0.4) reasons.push('Matches what you asked for');
++    const avgExperience = chosen.reduce((sum, entry) => sum + entry.place.experienceScore, 0) / chosen.length;
++    if (avgExperience >= 0.75) reasons.push('Highly rated stops');
++    if (template.sort === 'price') reasons.push('Keeps spend predictable');
++
++    plans.push({
++      id: `plan-${template.label.toLowerCase().replace(/\s+/g, '-')}-${Date.now()}-${plans.length}`,
++      title: chosen.map((entry) => entry.place.name).slice(0, 2).join(' → '),
++      subtitle: chosen.map((entry) => entry.place.subcategory ?? entry.place.category).join(', '),
++      vibe: chosen[0]?.place.vibe ?? '',
++      totalMinutes: totals.totalMinutes,
++      pricePerPerson: totals.pricePerPerson,
++      groupTotal: totals.pricePerPerson * request.people,
++      totalDistanceKm: totals.totalDistanceKm,
++      travelMinutes: totals.travelMinutes,
++      feasible: !feasibilityNote,
++      feasibilityNote,
++      recommendationLabel: template.label,
++      recommendationReason: reasons.length ? reasons : ['A different shape of outing than the other two'],
++      status: 'ready',
++      steps,
++      request,
++    });
++  }
++
++  return plans;
++}
+diff --git a/artifacts/glimmr/src/pages/outing.tsx b/artifacts/glimmr/src/pages/outing.tsx
+index 3e4f23e..e1d48cf 100644
+--- a/artifacts/glimmr/src/pages/outing.tsx
++++ b/artifacts/glimmr/src/pages/outing.tsx
+@@ -1,16 +1,30 @@
++import { useEffect, useState } from 'react';
+ import { Check, ChevronRight, MapPin, Navigation } from 'lucide-react';
+ import { Link, useParams } from 'wouter';
+ import { Header } from '@/components/glimmr-ui';
+-import { getOuting, getPlan } from '@/data/mockData';
+ import { formatDuration, formatINR } from '@/lib/glimmr-format';
+-import { calculatePlanTotals } from '@/services/glimmrService';
++import { getOuting, getPlanById } from '@/services/glimmrService';
++import type { Outing as OutingRecord, Plan } from '@/types/glimmr';
+ 
+ export default function Outing() {
+   const { id } = useParams<{ id: string }>();
+-  const plan = calculatePlanTotals(getPlan(id ?? 'plan-blue-hour'), 'ready');
+-  const outing = getOuting(plan.id);
++  const [plan, setPlan] = useState<Plan | null>(null);
++  const [outing, setOuting] = useState<OutingRecord | null>(null);
++
++  useEffect(() => {
++    let cancelled = false;
++    getPlanById(id ?? '').then((loadedPlan) => {
++      if (cancelled) return;
++      setPlan(loadedPlan);
++      void getOuting(loadedPlan.id).then((loadedOuting) => { if (!cancelled) setOuting(loadedOuting); });
++    });
++    return () => { cancelled = true; };
++  }, [id]);
++
++  if (!plan || !outing) return <div className="glimmr-app"><Header compact /><main className="page container-shell"><p className="muted" role="status">Loading your outing…</p></main></div>;
++
+   return <div className="glimmr-app"><Header compact /><main className="page container-shell"><div className="outing-layout">
+     <section className="map-panel" aria-label="Decorative route map"><div className="map-chip"><Navigation size={14} style={{ verticalAlign: 'middle', marginRight: 6 }} />Live route · 42% complete</div><svg viewBox="0 0 100 100" preserveAspectRatio="none"><path d="M12 76 C 24 62, 27 25, 47 35 S 62 80, 83 18" fill="none" stroke="#3B82F6" strokeWidth="1.3" strokeDasharray="2 1" /><circle cx="12" cy="76" r="3" fill="#FBBF24" stroke="#fff" strokeWidth="1" /><circle cx="47" cy="35" r="3" fill="#3B82F6" stroke="#fff" strokeWidth="1" /><circle cx="83" cy="18" r="3" fill="#fff" stroke="#3B82F6" strokeWidth="1" /></svg></section>
+-      <section className="surface outlining-card"><span className="outing-status"><i className="status-dot" />outing in progress</span><h1>{plan.title}</h1><p className="muted">Keep the route loose. GLIMMR will keep the next thing obvious.</p><div className="outing-summary"><span>{formatINR(plan.pricePerPerson)} / person</span><span>{formatINR(plan.groupTotal)} group total</span><span>{formatDuration(plan.totalMinutes)}</span></div><div className="next-stop"><span>next stop</span><h2>{plan.steps[1]?.place.name ?? plan.steps[0].place.name}</h2><p className="muted">{plan.steps[1]?.place.address ?? plan.steps[0].place.address}</p><div className="progress-bar"><i /></div><small className="muted">12 min by transit · 1 km</small></div><ul className="stop-list">{plan.steps.map((step, index) => <li key={step.id} className={index === 0 ? 'done' : ''}><b>{index === 0 ? <Check size={13} /> : index + 1}</b><span>{step.place.name}</span>{index === 1 && <ChevronRight size={15} color="#3b82f6" style={{ marginLeft: 'auto' }} />}</li>)}</ul><div style={{ display: 'flex', gap: 8, marginTop: 22 }}><button className="btn btn-blue" style={{ flex: 1 }} data-testid="button-open-directions" onClick={() => window.alert('Directions are ready — follow the blue line.') }><MapPin size={15} /> Open directions</button><Link href={`/plan/${plan.id}`} className="btn btn-soft" data-testid="button-edit-active-plan">Edit plan</Link></div></section>
++      <section className="surface outlining-card"><span className="outing-status"><i className="status-dot" />outing in progress</span><h1>{plan.title}</h1><p className="muted">Keep the route loose. GLIMMR will keep the next thing obvious.</p><div className="outing-summary"><span>{formatINR(plan.pricePerPerson)} / person</span><span>{formatINR(plan.groupTotal)} group total</span><span>{formatDuration(plan.totalMinutes)}</span></div><div className="next-stop"><span>next stop</span><h2>{plan.steps[1]?.place.name ?? plan.steps[0].place.name}</h2><p className="muted">{plan.steps[1]?.place.address ?? plan.steps[0].place.address}</p><div className="progress-bar"><i /></div><small className="muted">12 min by transit · 1 km</small></div><ul className="stop-list">{plan.steps.map((step, index) => <li key={step.id} className={step.id === outing.completedStepIds[0] ? 'done' : ''}><b>{step.id === outing.completedStepIds[0] ? <Check size={13} /> : index + 1}</b><span>{step.place.name}</span>{step.id === outing.currentStepId && <ChevronRight size={15} color="#3b82f6" style={{ marginLeft: 'auto' }} />}</li>)}</ul><div style={{ display: 'flex', gap: 8, marginTop: 22 }}><button className="btn btn-blue" style={{ flex: 1 }} data-testid="button-open-directions" onClick={() => window.alert('Directions are ready — follow the blue line.') }><MapPin size={15} /> Open directions</button><Link href={`/plan/${plan.id}`} className="btn btn-soft" data-testid="button-edit-active-plan">Edit plan</Link></div></section>
+   </div></main></div>;
+ }
+\ No newline at end of file
+diff --git a/artifacts/glimmr/src/pages/plan-detail.tsx b/artifacts/glimmr/src/pages/plan-detail.tsx
+index 4fb984a..3a825e5 100644
+--- a/artifacts/glimmr/src/pages/plan-detail.tsx
++++ b/artifacts/glimmr/src/pages/plan-detail.tsx
+@@ -1,8 +1,12 @@
+ import { useEffect, useState } from 'react';
++import { AnimatePresence, motion } from 'framer-motion';
+ import { ArrowLeft, ArrowRight, Plus, RefreshCw } from 'lucide-react';
+ import { Link, useParams, useLocation } from 'wouter';
+ import { EditDialog, Header, RouteLegend, RouteVisual, TimelineStep } from '@/components/glimmr-ui';
++import { ValueTransition } from '@/components/motion/ValueTransition';
++import { duration as motionDuration, ease } from '@/lib/motion';
+ import { editPlan, getPlanById } from '@/services/glimmrService';
++import { places } from '@/data/mockData';
+ import type { Plan, PlanStatus, PlanStep } from '@/types/glimmr';
+ import { formatDuration, formatINR } from '@/lib/glimmr-format';
+ 
+@@ -16,13 +20,13 @@ export default function PlanDetail() {
+   const [loading, setLoading] = useState(true);
+   const [operation, setOperation] = useState<PlanStatus>('idle');
+   const [changeNotice, setChangeNotice] = useState<string | null>(null);
+-  useEffect(() => { getPlanById(id ?? 'plan-blue-hour').then(setPlan).finally(() => setLoading(false)); }, [id]);
++  useEffect(() => { getPlanById(id ?? '').then(setPlan).finally(() => setLoading(false)); }, [id]);
+   if (loading) return <div className="glimmr-app"><Header compact /><main className="page container-shell"><div className="skeleton" /></main></div>;
+   if (!plan) return <div className="glimmr-app"><Header compact /><main className="page container-shell"><div className="surface error-card"><h2 className="display">That plan wandered off.</h2><Link href="/results" className="btn btn-blue">Back to plans</Link></div></main></div>;
+   const applyEdit = async (value: { kind: 'place' | 'duration' | 'instruction'; value: string }) => {
+     if (!dialog) return;
+     const edit = dialog.mode === 'add'
+-      ? { type: 'add' as const, placeId: value.kind === 'place' ? value.value : 'p-mina', instruction: value.kind === 'instruction' ? value.value : undefined }
++      ? { type: 'add' as const, placeId: value.kind === 'place' ? value.value : places[0]?.id, instruction: value.kind === 'instruction' ? value.value : undefined }
+       : dialog.mode === 'replace' && value.kind === 'place'
+         ? { type: 'replace' as const, stepId: dialog.step?.id, placeId: value.value }
+         : { type: 'edit' as const, stepId: dialog.step?.id, changes: value.kind === 'duration' ? { durationMinutes: Number(value.value) } : { note: value.value }, instruction: value.kind === 'instruction' ? value.value : undefined };
+@@ -66,13 +70,33 @@ export default function PlanDetail() {
+    const operationCopy = operation === 'adding' ? 'Checking if this fits...' : operation === 'deleting' ? 'Recalculating your outing...' : operation === 'replacing' ? 'Finding a replacement...' : operation === 'editing' ? 'Updating the stop...' : 'Recalculating your outing...';
+   return <div className="glimmr-app"><Header compact /><main className="page container-shell">
+     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 28, gap: 12, flexWrap: 'wrap' }}><Link href="/results" className="btn btn-ghost" style={{ paddingLeft: 0 }} data-testid="link-plan-back"><ArrowLeft size={15} /> All plans</Link><Link href={`/outing/${plan.id}`} className="btn btn-blue" data-testid="button-start-outing">Start this outing <ArrowRight size={15} /></Link></div>
+-     {isBusy && <div className="recalc-banner" role="status" aria-live="polite"><RefreshCw size={15} /> {operationCopy}</div>}
+-       {changeNotice && !isBusy && <div className="change-banner" role="status" aria-live="polite">{changeNotice}</div>}
++     <AnimatePresence mode="wait">
++       {isBusy ? <motion.div key="recalc" className="recalc-banner" role="status" aria-live="polite" initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: motionDuration.interaction, ease }}><RefreshCw size={15} /> {operationCopy}</motion.div>
++       : changeNotice ? <motion.div key="change" className="change-banner" role="status" aria-live="polite" initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: motionDuration.interaction, ease }}>{changeNotice}</motion.div>
++       : null}
++     </AnimatePresence>
+       <div className="plan-layout"><section className="surface timeline"><div className="timeline-head"><div><div className="eyebrow">editable route</div><h1>{plan.title}</h1><p className="muted">{plan.subtitle}</p></div><button className="btn btn-soft" onClick={() => setDialog({ mode: 'add' })} disabled={isBusy} data-testid="button-add-stop"><Plus size={15} /> Add stop</button></div>
+-      <div>{plan.steps.map((step, index) => <TimelineStep key={step.id} step={step} index={index} onEdit={() => setDialog({ mode: 'edit', step })} onReplace={() => setDialog({ mode: 'replace', step })} onDelete={() => void deleteStep(step)} />)}</div>
++      <div>
++        <AnimatePresence initial={false}>
++          {plan.steps.map((step, index) => (
++            <motion.div
++              key={step.id}
++              layout
++              initial={{ opacity: 0, height: 0 }}
++              animate={{ opacity: 1, height: 'auto' }}
++              exit={{ opacity: 0, height: 0 }}
++              transition={{ duration: motionDuration.content, ease }}
++            >
++              <TimelineStep step={step} index={index} onEdit={() => setDialog({ mode: 'edit', step })} onReplace={() => setDialog({ mode: 'replace', step })} onDelete={() => void deleteStep(step)} />
++            </motion.div>
++          ))}
++        </AnimatePresence>
++      </div>
+       <RouteLegend />
+     </section>
+-     <aside className="surface summary-card"><h3>Plan math</h3><div className="summary-stat"><span>Per person</span><strong data-testid="text-plan-cost">{formatINR(plan.pricePerPerson)}</strong></div><div className="summary-stat"><span>Group total</span><strong data-testid="text-plan-group-total">{formatINR(plan.groupTotal)}</strong></div><div className="summary-stat"><span>Total time</span><strong data-testid="text-plan-duration">{formatDuration(plan.totalMinutes)}</strong></div><div className="summary-stat"><span>Travel time</span><strong data-testid="text-plan-travel">{plan.travelMinutes} min</strong></div><div className="summary-stat"><span>Route distance</span><strong data-testid="text-plan-distance">{plan.totalDistanceKm} km</strong></div><div className={`feasibility ${plan.feasible ? '' : 'warning'}`} data-testid="status-feasibility">{plan.feasible ? 'Fits your window with room to breathe.' : `This adds ${formatDuration(plan.totalMinutes - plan.request.availableMinutes)} beyond your available time. Trim a stop or widen your window.`}</div><RouteVisual small /></aside></div>
+-    {dialog && <EditDialog step={dialog.step} mode={dialog.mode} onClose={() => setDialog(null)} onSave={(value) => void applyEdit(value)} />}
++     <aside className="surface summary-card"><h3>Plan math</h3><div className="summary-stat"><span>Per person</span><strong data-testid="text-plan-cost"><ValueTransition value={formatINR(plan.pricePerPerson)} /></strong></div><div className="summary-stat"><span>Group total</span><strong data-testid="text-plan-group-total"><ValueTransition value={formatINR(plan.groupTotal)} /></strong></div><div className="summary-stat"><span>Total time</span><strong data-testid="text-plan-duration"><ValueTransition value={formatDuration(plan.totalMinutes)} /></strong></div><div className="summary-stat"><span>Travel time</span><strong data-testid="text-plan-travel"><ValueTransition value={`${plan.travelMinutes} min`} /></strong></div><div className="summary-stat"><span>Route distance</span><strong data-testid="text-plan-distance"><ValueTransition value={`${plan.totalDistanceKm} km`} /></strong></div><div className={`feasibility ${plan.feasible ? '' : 'warning'}`} data-testid="status-feasibility">{plan.feasible ? 'Fits your window with room to breathe.' : `This adds ${formatDuration(plan.totalMinutes - plan.request.availableMinutes)} beyond your available time. Trim a stop or widen your window.`}</div><RouteVisual small /></aside></div>
++    <AnimatePresence>
++      {dialog && <EditDialog step={dialog.step} mode={dialog.mode} onClose={() => setDialog(null)} onSave={(value) => void applyEdit(value)} />}
++    </AnimatePresence>
+   </main></div>;
+ }
+\ No newline at end of file
+diff --git a/artifacts/glimmr/src/pages/planner.tsx b/artifacts/glimmr/src/pages/planner.tsx
+index 1f4c0e5..8443b78 100644
+--- a/artifacts/glimmr/src/pages/planner.tsx
++++ b/artifacts/glimmr/src/pages/planner.tsx
+@@ -3,6 +3,7 @@ import { ArrowRight, Car, CircleHelp, Footprints, TrainFront } from 'lucide-reac
+ import { useLocation } from 'wouter';
+ import { defaultRequest } from '@/data/mockData';
+ import { Header, LocationField } from '@/components/glimmr-ui';
++import { StaggerContainer, StaggerItem } from '@/components/motion/Stagger';
+ import type { OutingType, PlannerRequest, TransportMode } from '@/types/glimmr';
+ 
+ const outingTypes: OutingType[] = ['Food crawl', 'Low-key day', 'Date night', 'Arts & culture', 'Fresh air'];
+@@ -38,12 +39,14 @@ export default function Planner() {
+     <div className="page-header"><div><div className="eyebrow">a few useful constraints</div><h1 className="display">What sounds good?</h1><p className="muted" style={{ maxWidth: 500 }}>The more honest you are, the better the plan. You can change everything later.</p></div></div>
+     <div className="planner-layout">
+       <form className="surface planner-form" onSubmit={submit}>
+-         <section className="form-section"><h2>Where are you going?</h2><p>Tell us where the outing starts and where you want to end up.</p><div className="field-grid"><LocationField id="from" label="From" value={form.from} placeholder="Current location or neighbourhood" onChange={(value) => update('from', value)} error={errors.from} /><LocationField id="to" label="To" value={form.to} placeholder="Destination or neighbourhood" onChange={(value) => update('to', value)} error={errors.to} /></div></section>
+-          <section className="form-section"><h2>Your situation</h2><p>How much time and spend can we work with?</p><div className="field-grid"><div className="field"><label htmlFor="time">Available time</label><select id="time" className="select" aria-invalid={Boolean(errors.availableMinutes)} aria-describedby={errors.availableMinutes ? 'time-error' : undefined} value={form.availableMinutes} onChange={(event) => update('availableMinutes', Number(event.target.value))} data-testid="select-time">{timeOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>{errors.availableMinutes && <span id="time-error" className="field-error" role="alert">{errors.availableMinutes}</span>}</div><div className="field"><label htmlFor="budget">Budget per person</label><select id="budget" className="select" aria-invalid={Boolean(errors.budget)} aria-describedby={errors.budget ? 'budget-error' : undefined} value={form.budget} onChange={(event) => update('budget', Number(event.target.value))} data-testid="select-budget">{budgetOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>{errors.budget && <span id="budget-error" className="field-error" role="alert">{errors.budget}</span>}</div></div></section>
+-          <section className="form-section"><h2>Who’s coming?</h2><p>A couple of people changes the rhythm.</p><div className="choice-grid" aria-describedby={errors.people ? 'people-error' : undefined}>{[1, 2, 3, 4, 5, 6].map((people) => <button type="button" key={people} className={`choice ${form.people === people ? 'selected' : ''}`} onClick={() => update('people', people)} data-testid={`button-people-${people}`}>{people === 6 ? '6+' : people} {people === 1 ? 'person' : 'people'}</button>)}</div>{errors.people && <span id="people-error" className="field-error" role="alert">{errors.people}</span>}</section>
+-        <section className="form-section"><h2>How are we moving?</h2><p>We’ll use this to keep the route realistic.</p><div className="choice-grid">{transports.map(({ id, label, icon: Icon }) => <button type="button" key={id} className={`choice ${form.transport === id ? 'selected' : ''}`} onClick={() => update('transport', id)} data-testid={`button-transport-${id}`}><Icon size={14} /> {label}</button>)}</div></section>
+-        <section className="form-section"><h2>Choose the energy</h2><p>Pick the headline; we’ll fill in the details.</p><div className="choice-grid">{outingTypes.map((type) => <button type="button" key={type} className={`choice ${form.outingType === type ? 'selected' : ''}`} onClick={() => update('outingType', type)} data-testid={`button-type-${type.toLowerCase().replaceAll(' ', '-')}`}>{type}</button>)}</div></section>
+-         <section className="form-section"><h2>Anything you’re in the mood for? <span className="muted" style={{ fontSize: '.7rem', fontFamily: 'var(--app-font-mono)' }}>optional</span></h2><p>Keep it natural. GLIMMR will use this to shape the route.</p><textarea className="input" value={form.preference} onChange={(event) => update('preference', event.target.value)} placeholder="Good food, somewhere peaceful, and nice for photos." data-testid="input-preference" /></section>
++        <StaggerContainer>
++         <StaggerItem><section className="form-section"><h2>Where are you going?</h2><p>Tell us where the outing starts and where you want to end up.</p><div className="field-grid"><LocationField id="from" label="From" value={form.from} placeholder="Current location or neighbourhood" onChange={(value) => update('from', value)} error={errors.from} /><LocationField id="to" label="To" value={form.to} placeholder="Destination or neighbourhood" onChange={(value) => update('to', value)} error={errors.to} /></div></section></StaggerItem>
++          <StaggerItem><section className="form-section"><h2>Your situation</h2><p>How much time and spend can we work with?</p><div className="field-grid"><div className="field"><label htmlFor="time">Available time</label><select id="time" className="select" aria-invalid={Boolean(errors.availableMinutes)} aria-describedby={errors.availableMinutes ? 'time-error' : undefined} value={form.availableMinutes} onChange={(event) => update('availableMinutes', Number(event.target.value))} data-testid="select-time">{timeOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>{errors.availableMinutes && <span id="time-error" className="field-error" role="alert">{errors.availableMinutes}</span>}</div><div className="field"><label htmlFor="budget">Budget per person</label><select id="budget" className="select" aria-invalid={Boolean(errors.budget)} aria-describedby={errors.budget ? 'budget-error' : undefined} value={form.budget} onChange={(event) => update('budget', Number(event.target.value))} data-testid="select-budget">{budgetOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>{errors.budget && <span id="budget-error" className="field-error" role="alert">{errors.budget}</span>}</div></div></section></StaggerItem>
++          <StaggerItem><section className="form-section"><h2>Who’s coming?</h2><p>A couple of people changes the rhythm.</p><div className="choice-grid" aria-describedby={errors.people ? 'people-error' : undefined}>{[1, 2, 3, 4, 5, 6].map((people) => <button type="button" key={people} className={`choice ${form.people === people ? 'selected' : ''}`} onClick={() => update('people', people)} data-testid={`button-people-${people}`}>{people === 6 ? '6+' : people} {people === 1 ? 'person' : 'people'}</button>)}</div>{errors.people && <span id="people-error" className="field-error" role="alert">{errors.people}</span>}</section></StaggerItem>
++        <StaggerItem><section className="form-section"><h2>How are we moving?</h2><p>We’ll use this to keep the route realistic.</p><div className="choice-grid">{transports.map(({ id, label, icon: Icon }) => <button type="button" key={id} className={`choice ${form.transport === id ? 'selected' : ''}`} onClick={() => update('transport', id)} data-testid={`button-transport-${id}`}><Icon size={14} /> {label}</button>)}</div></section></StaggerItem>
++        <StaggerItem><section className="form-section"><h2>Choose the energy</h2><p>Pick the headline; we’ll fill in the details.</p><div className="choice-grid">{outingTypes.map((type) => <button type="button" key={type} className={`choice ${form.outingType === type ? 'selected' : ''}`} onClick={() => update('outingType', type)} data-testid={`button-type-${type.toLowerCase().replaceAll(' ', '-')}`}>{type}</button>)}</div></section></StaggerItem>
++         <StaggerItem><section className="form-section"><h2>Anything you’re in the mood for? <span className="muted" style={{ fontSize: '.7rem', fontFamily: 'var(--app-font-mono)' }}>optional</span></h2><p>Keep it natural. GLIMMR will use this to shape the route.</p><textarea className="input" value={form.preference} onChange={(event) => update('preference', event.target.value)} placeholder="Good food, somewhere peaceful, and nice for photos." data-testid="input-preference" /></section></StaggerItem>
++        </StaggerContainer>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 25 }}><button type="submit" className="btn btn-blue" data-testid="button-generate-plans">Plan an Outing <ArrowRight size={16} /></button></div>
+       </form>
+       <aside className="planner-aside"><CircleHelp size={22} color="#fbbf24" /><h3>We’ll do the thinking.</h3><p>GLIMMR balances the details that make a plan feel possible, not just interesting.</p><ul><li>Route that fits your actual window</li><li>Cost that won’t surprise you</li><li>Stops with different energy</li></ul></aside>
+diff --git a/artifacts/glimmr/src/pages/results.tsx b/artifacts/glimmr/src/pages/results.tsx
+index cb7de75..218467d 100644
+--- a/artifacts/glimmr/src/pages/results.tsx
++++ b/artifacts/glimmr/src/pages/results.tsx
+@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
+ import { ArrowLeft, RefreshCw } from 'lucide-react';
+ import { Link, useLocation } from 'wouter';
+ import { Header, PlanCard, EmptyState } from '@/components/glimmr-ui';
++import { StaggerContainer, StaggerItem } from '@/components/motion/Stagger';
+ import { createPlans } from '@/services/glimmrService';
+ import { defaultRequest } from '@/data/mockData';
+ import type { Plan, PlannerRequest } from '@/types/glimmr';
+@@ -23,6 +24,6 @@ export default function Results() {
+   return <div className="glimmr-app"><Header compact /><main className="page container-shell">
+      <div className="page-header"><div><Link href="/planner" className="btn btn-ghost" style={{ paddingLeft: 0 }} data-testid="link-results-back"><ArrowLeft size={15} /> Tune inputs</Link><div className="eyebrow" style={{ marginTop: 20 }}>three ways to spend it</div><h1 className="display">Pick your kind of good.</h1><p className="muted">Built for {request.people === 6 ? '6+' : request.people} {request.people === 1 ? 'person' : 'people'} · {request.from} to {request.to} · {formatDuration(request.availableMinutes)}</p></div><button className="btn btn-soft" onClick={() => void load('regenerate')} disabled={loading} data-testid="button-regenerate"><RefreshCw size={15} /> Regenerate</button></div>
+      <div className="surface results-context"><span className="context-pill blue">{request.outingType}</span><span className="context-pill">{request.transport}</span><span className="context-pill">{formatINR(request.budget)} per person</span>{request.preference && <span className="context-pill">“{request.preference}”</span>}</div>
+-      {loading ? <div role="status" aria-live="polite"><div className="loading-copy"><strong>{loadingMode === 'regenerate' ? 'Finding a better fit...' : 'Finding places that fit...'}</strong><span>{loadingMode === 'regenerate' ? 'Checking travel and building another plan.' : 'Checking travel time and building your plan.'}</span></div><div className="plans-grid"><div className="skeleton" /><div className="skeleton" /><div className="skeleton" /></div></div> : error ? <div className="surface error-card"><h2 className="display">We couldn’t update these plans.</h2><p className="muted">Your inputs are still safe. Try again and GLIMMR will keep the same constraints.</p><button className="btn btn-blue" onClick={() => void load('regenerate')} data-testid="button-retry-results">Try again</button></div> : plans.length ? <div className="plans-grid">{plans.map((plan) => <PlanCard key={plan.id} plan={plan} />)}</div> : <EmptyState onReset={() => setLocation('/planner')} />}
++      {loading ? <div role="status" aria-live="polite"><div className="loading-copy"><strong>{loadingMode === 'regenerate' ? 'Finding a better fit...' : 'Finding places that fit...'}</strong><span>{loadingMode === 'regenerate' ? 'Checking travel and building another plan.' : 'Checking travel time and building your plan.'}</span></div><div className="plans-grid"><div className="skeleton" /><div className="skeleton" /><div className="skeleton" /></div></div> : error ? <div className="surface error-card"><h2 className="display">We couldn’t update these plans.</h2><p className="muted">Your inputs are still safe. Try again and GLIMMR will keep the same constraints.</p><button className="btn btn-blue" onClick={() => void load('regenerate')} data-testid="button-retry-results">Try again</button></div> : plans.length ? <StaggerContainer className="plans-grid">{plans.map((plan) => <StaggerItem key={plan.id} className="plan-card-slot" strong={plan.recommendationLabel === 'Best fit'}><PlanCard plan={plan} /></StaggerItem>)}</StaggerContainer> : <EmptyState onReset={() => setLocation('/planner')} />}
+   </main></div>;
+ }
+\ No newline at end of file
+diff --git a/artifacts/glimmr/src/services/glimmrService.ts b/artifacts/glimmr/src/services/glimmrService.ts
+index 795b009..1e5daa2 100644
+--- a/artifacts/glimmr/src/services/glimmrService.ts
++++ b/artifacts/glimmr/src/services/glimmrService.ts
+@@ -1,67 +1,138 @@
+-import { getPlan, mockPlans, places } from '@/data/mockData';
+-import type { Plan, PlanEdit, PlannerRequest, PlanStep } from '@/types/glimmr';
++import { defaultRequest, places } from '@/data/mockData';
++import { generatePlans } from '@/lib/recommendationEngine';
++import { placePrice } from '@/lib/glimmr-format';
++import type { Outing, Plan, PlanEdit, PlannerRequest, PlanStep } from '@/types/glimmr';
+ 
+ const wait = (ms = 420) => new Promise((resolve) => window.setTimeout(resolve, ms));
+ 
++/**
++ * In-memory plan store, keyed by plan id.
++ *
++ * Honest limitation: this is a client-side cache, not persistence. It
++ * survives navigation within the app (Results -> Plan detail -> Outing) but
++ * not a hard refresh or a fresh tab on a deep link -- there's no backend yet
++ * to hand a plan id to (see Phase 5, "Backend activation", in the
++ * architecture doc). getPlanById below falls back to regenerating from the
++ * default request rather than 404ing, which is the right MVP trade-off but
++ * not the final behavior.
++ */
++const planStore = new Map<string, Plan>();
++
+ export function calculatePlanTotals(plan: Plan, status: Plan['status'] = plan.status): Plan {
+-  const pricePerPerson = plan.steps.reduce((total, step) => total + step.place.price, 0);
++  const pricePerPerson = plan.steps.reduce((total, step) => total + placePrice(step.place), 0);
+   const totalMinutes = plan.steps.reduce((total, step) => total + step.durationMinutes + step.travelMinutes, 0);
+-  return {
++  const travelMinutes = plan.steps.reduce((total, step) => total + step.travelMinutes, 0);
++  const totalDistanceKm = Number(plan.steps.reduce((total, step) => total + step.distanceKm, 0).toFixed(1));
++  const feasible = totalMinutes <= plan.request.availableMinutes;
++  const updated: Plan = {
+     ...plan,
+     totalMinutes,
+     pricePerPerson,
+     groupTotal: pricePerPerson * plan.request.people,
+-    totalDistanceKm: Number(plan.steps.reduce((total, step) => total + step.distanceKm, 0).toFixed(1)),
+-    travelMinutes: plan.steps.reduce((total, step) => total + step.travelMinutes, 0),
+-    feasible: totalMinutes <= plan.request.availableMinutes,
++    totalDistanceKm,
++    travelMinutes,
++    feasible,
++    feasibilityNote: feasible ? undefined : `This edit adds ${totalMinutes - plan.request.availableMinutes} min beyond your available time.`,
+     status,
+   };
++  planStore.set(updated.id, updated);
++  return updated;
+ }
+ 
+ export async function createPlans(request: PlannerRequest): Promise<Plan[]> {
+   await wait();
+-  const plans = mockPlans.map((plan) => calculatePlanTotals({ ...plan, request }, 'ready'));
+-  return request.availableMinutes <= 30 || request.budget <= 100 ? [] : plans;
++  if (request.availableMinutes <= 30 || request.budget <= 100) return [];
++  return generatePlans(request, places).map((plan) => calculatePlanTotals(plan, 'ready'));
+ }
+ 
+ export async function getPlanById(id: string): Promise<Plan> {
+   await wait(260);
+-  return calculatePlanTotals(getPlan(id), 'ready');
++  const cached = planStore.get(id);
++  if (cached) return calculatePlanTotals(cached, 'ready');
++  // Deep-link / refresh fallback -- see planStore comment above.
++  const [fallback] = generatePlans(defaultRequest, places);
++  return calculatePlanTotals(fallback, 'ready');
++}
++
++export async function getOuting(planId: string): Promise<Outing> {
++  const plan = await getPlanById(planId);
++  return {
++    id: `outing-${planId}`,
++    planId,
++    startedAt: new Date().toISOString(),
++    currentStepId: plan.steps[1]?.id ?? plan.steps[0].id,
++    completedStepIds: [plan.steps[0]?.id ?? ''],
++  };
+ }
+ 
+ export async function editPlan(plan: Plan, edit: PlanEdit): Promise<Plan> {
+   await wait(220);
+   let steps = [...plan.steps];
+-  if (edit.type === 'delete' && edit.stepId) steps = steps.filter((step) => step.id !== edit.stepId);
++
++  if (edit.type === 'delete' && edit.stepId) {
++    steps = steps.filter((step) => step.id !== edit.stepId);
++  }
++
+   if (edit.type === 'replace' && edit.stepId && edit.placeId) {
+     const replacement = places.find((place) => place.id === edit.placeId);
+-    steps = steps.map((step) => replacement && step.id === edit.stepId ? { ...step, place: replacement, durationMinutes: replacement.durationMinutes } : step);
++    steps = steps.map((step) =>
++      replacement && step.id === edit.stepId
++        ? { ...step, place: replacement, durationMinutes: replacement.typicalVisitDuration }
++        : step,
++    );
+   }
++
+   if (edit.type === 'edit' && edit.stepId && edit.changes) {
+-    steps = steps.map((step) => {
+-      if (step.id !== edit.stepId) return step;
+-      const instruction = edit.instruction?.toLowerCase() ?? '';
+-      if (instruction.includes('cheaper')) {
+-        const cheaper = places.filter((place) => place.price < step.place.price).sort((a, b) => a.price - b.price)[0];
+-        return cheaper ? { ...step, place: cheaper, durationMinutes: cheaper.durationMinutes, note: edit.instruction } : { ...step, ...edit.changes };
+-      }
+-      if (instruction.includes('farther')) {
+-        const farther = places.find((place) => place.id !== step.place.id && place.category !== step.place.category);
+-        return farther ? { ...step, place: farther, durationMinutes: farther.durationMinutes, note: edit.instruction } : { ...step, ...edit.changes };
++    steps = steps.map((step) => (step.id === edit.stepId ? { ...step, ...edit.changes } : step));
++  }
++
++  // Edit-instruction parsing: free text -> a structured action against the
++  // *current* step, same NLP-boundary rule the preference parser uses --
++  // this only ever selects among real places already in the data set, never
++  // invents one. See vision Section 4 (AI role) and Section 7 (constraint
++  // preservation: change only what was asked, keep the rest of the plan
++  // stable).
++  if (edit.type === 'edit' && edit.stepId && edit.instruction) {
++    const instruction = edit.instruction.toLowerCase();
++    const currentStep = steps.find((step) => step.id === edit.stepId);
++    if (currentStep) {
++      let candidate: (typeof places)[number] | undefined;
++      if (instruction.includes('cheap')) {
++        candidate = places
++          .filter((place) => place.id !== currentStep.place.id && placePrice(place) < placePrice(currentStep.place))
++          .sort((a, b) => placePrice(a) - placePrice(b))[0];
++      } else if (instruction.includes('far') || instruction.includes('farther')) {
++        candidate = places.find((place) => place.id !== currentStep.place.id && place.category !== currentStep.place.category);
++      } else if (instruction.includes('vegetarian') || instruction.includes('veg')) {
++        candidate = places.find((place) => place.id !== currentStep.place.id && place.category === currentStep.place.category);
+       }
+-      if (instruction.includes('category')) {
+-        const differentCategory = places.find((place) => place.category !== step.place.category);
+-        return differentCategory ? { ...step, place: differentCategory, durationMinutes: differentCategory.durationMinutes, note: edit.instruction } : { ...step, ...edit.changes };
++      if (candidate) {
++        const found = candidate;
++        steps = steps.map((step) =>
++          step.id === edit.stepId
++            ? { ...step, place: found, durationMinutes: found.typicalVisitDuration, note: edit.instruction }
++            : step,
++        );
+       }
+-      return { ...step, ...edit.changes };
+-    });
++    }
+   }
++
+   if (edit.type === 'add' && edit.placeId) {
+     const place = places.find((item) => item.id === edit.placeId);
+     if (place) {
+-      const newStep: PlanStep = { id: `step-${place.id}-${Date.now()}`, place, arrival: '9:15 PM', durationMinutes: place.durationMinutes, travelMinutes: 12, distanceKm: 1, note: edit.instruction || 'Added to your route.' };
++      const previous = steps[steps.length - 1]?.place;
++      const newStep: PlanStep = {
++        id: `step-${place.id}-${Date.now()}`,
++        place,
++        arrival: 'Later that evening',
++        durationMinutes: place.typicalVisitDuration,
++        travelMinutes: previous ? 12 : 0,
++        distanceKm: previous ? 1 : 0,
++        note: edit.instruction || 'Added to your route.',
++      };
+       steps = [...steps, newStep];
+     }
+   }
++
+   return calculatePlanTotals({ ...plan, steps }, 'success');
+ }
+diff --git a/artifacts/glimmr/src/types/glimmr.ts b/artifacts/glimmr/src/types/glimmr.ts
+index ce7f58a..e47628f 100644
+--- a/artifacts/glimmr/src/types/glimmr.ts
++++ b/artifacts/glimmr/src/types/glimmr.ts
+@@ -26,15 +26,48 @@ export interface PlannerRequest {
+   preference?: string;
+ }
+ 
++/**
++ * Coverage limit, not a hardcoded product limitation — see /areas/glimmr.md.
++ * New areas are new rows here, never new branches in the recommendation
++ * engine or frontend.
++ */
++export interface ServiceArea {
++  id: string;
++  name: string;
++  city: string;
++  active: boolean;
++}
++
++export type PriceBasis = 'per_person' | 'per_group' | 'flat';
++export type VerificationStatus = 'verified' | 'unverified' | 'ai-suggested';
++
+ export interface Place {
+   id: string;
+   name: string;
++  serviceArea: string; // ServiceArea['id']
+   category: string;
++  subcategory?: string;
+   address: string;
+   description: string;
+-  price: number;
+-  durationMinutes: number;
+-  coordinates: [number, number];
++  lat: number;
++  lng: number;
++  priceMin: number;
++  priceMax: number;
++  priceBasis: PriceBasis;
++  openingHours: string; // MVP: human-readable, e.g. "11:00 AM – 11:30 PM"
++  typicalVisitDuration: number; // minutes
++  suitableFor: string[]; // e.g. 'friends', 'couple', 'solo', 'family'
++  activities: string[]; // tags used for preference matching, e.g. 'food', 'peaceful', 'photography'
++  vibe: string;
++  rating: number; // 0–5
++  reviewCount: number;
++  experienceScore: number; // 0–1, curated quality signal independent of raw rating
++  websiteUrl?: string;
++  mapsUrl?: string;
++  source: string; // provenance, e.g. 'web-research-2026-09'
++  verificationStatus: VerificationStatus;
++  lastVerified: string; // ISO date
++  confidence: number; // 0–1
+ }
+ 
+ export interface PlanStep {
+@@ -58,6 +91,7 @@ export interface Plan {
+   totalDistanceKm: number;
+   travelMinutes: number;
+   feasible: boolean;
++  feasibilityNote?: string;
+   recommendationLabel: string;
+   recommendationReason: string[];
+   status: PlanStatus;
+@@ -79,4 +113,4 @@ export interface Outing {
+   startedAt: string;
+   currentStepId: string;
+   completedStepIds: string[];
+-}
+\ No newline at end of file
++}

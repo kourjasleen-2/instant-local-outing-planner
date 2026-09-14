@@ -1,0 +1,963 @@
+You are the SENIOR FRONTEND ARCHITECT, PRODUCT ENGINEER, UX/UI LEAD, ACCESSIBILITY ENGINEER, MOTION DESIGNER, and INTERACTION DESIGNER for the existing GLIMMR application.
+
+THIS IS A REFINEMENT TASK.
+
+DO NOT REBUILD THE APPLICATION FROM SCRATCH.
+DO NOT GENERATE A NEW DESIGN.
+DO NOT REPLACE THE CURRENT VISUAL LANGUAGE.
+DO NOT CHANGE THE CORE ARCHITECTURE UNLESS A CONFIRMED TECHNICAL ISSUE REQUIRES IT.
+
+The current Glimmr frontend is already visually strong and must be treated as the approved visual foundation.
+
+Your responsibility is to improve:
+- product correctness
+- interaction correctness
+- missing features
+- state management
+- accessibility
+- responsiveness
+- loading/error/empty states
+- animation behavior
+- consistency
+- future backend/AI/Maps integration readiness
+
+============================================================
+PHASE 0 — INSPECT BEFORE MODIFYING
+============================================================
+
+FIRST inspect the entire existing project.
+
+Before changing code, inspect:
+
+- package.json
+- app routes
+- components
+- hooks
+- services
+- mock data
+- TypeScript types
+- state management
+- styling
+- animation code
+- existing dialogs/sheets
+- forms
+- current plan logic
+- current navigation
+- current responsive behavior
+
+Run the existing project.
+
+Run the current build.
+
+Identify:
+- build errors
+- TypeScript errors
+- runtime errors
+- console errors
+- broken imports
+- dead buttons
+- inconsistent state
+- duplicated components
+- duplicated business logic
+
+DO NOT modify anything until you understand the existing structure.
+
+============================================================
+NON-NEGOTIABLE SAFETY RULES
+============================================================
+
+1. Preserve all currently working routes.
+2. Preserve the visual identity.
+3. Prefer editing existing components instead of replacing them.
+4. Reuse existing components wherever possible.
+5. Do not create duplicate components.
+6. Do not introduce unnecessary packages.
+7. Do not upgrade major dependencies without necessity.
+8. Do not rewrite the whole application.
+9. Do not remove functioning behavior.
+10. Do not silently change data contracts.
+11. Do not introduce TypeScript errors.
+12. Do not leave console errors.
+13. Do not leave broken imports.
+14. Do not use absolute positioning for standard page layout.
+15. Use Flexbox/Grid for layout.
+16. Keep normal spacing based on a consistent 8px system.
+17. Do not add features unrelated to the requested improvements.
+18. After every substantial change, validate the project.
+19. If a change causes a regression, fix the regression before proceeding.
+20. Never claim a feature is complete unless it has been verified.
+
+============================================================
+PRODUCT DEFINITION
+============================================================
+
+GLIMMR takes:
+
+- From
+- To
+- Available time
+- Budget per person
+- Number of people
+- Transport
+- Outing type / energy
+- Optional preference
+
+Then:
+
+SEARCH
+→ generate plans
+→ user selects a plan
+→ user can edit / replace / delete / add
+→ system recalculates
+→ user can regenerate
+→ user can start outing
+
+The plan is a LIVING PLAN, not a static page.
+
+============================================================
+CORE PLAN ACTIONS
+============================================================
+
+These actions MUST remain conceptually different.
+
+1. REGENERATE
+Meaning:
+"Give me a different overall plan."
+
+Preserve:
+- location
+- destination
+- time
+- budget
+- people
+- transport
+- outing type
+- important preferences
+
+Change:
+- recommended combinations
+
+2. EDIT
+Meaning:
+"Change this particular part of the plan."
+
+Only change the selected component unless the requested change creates a constraint conflict.
+
+3. REPLACE
+Meaning:
+"Replace this particular place with another suitable place."
+
+Preserve the rest of the plan whenever possible.
+
+4. DELETE
+Meaning:
+"Remove this stop."
+
+Then recalculate:
+- total cost
+- group total
+- total duration
+- travel time
+- route distance
+- feasibility
+
+5. ADD
+Meaning:
+"Add another stop."
+
+Then recalculate:
+- total cost
+- group total
+- total duration
+- travel time
+- route distance
+- feasibility
+
+============================================================
+LANDING PAGE IMPROVEMENTS
+============================================================
+
+Preserve the current design.
+
+Primary CTA MUST be:
+
+"Plan an Outing →"
+
+Use this consistently in:
+- header
+- hero
+- CTA section
+- relevant navigation
+
+Do not use multiple competing labels such as:
+- Start planning
+- Plan something good
+- Build my outing
+
+unless there is strong contextual justification.
+
+Keep the current hero style.
+
+Clarify the supporting text so that a new visitor immediately understands:
+
+Glimmr:
+- understands their situation
+- builds an outing
+- allows them to change the plan later
+
+Keep:
+- current typography
+- current whitespace
+- current black/blue visual identity
+- current route visual
+
+The route visual should remain decorative.
+
+Do not make WebGL/3D required for product functionality.
+
+Provide graceful fallback if 3D fails.
+
+Add prefers-reduced-motion support.
+
+"How it works" must actually work:
+- either scroll to a valid section
+- or navigate to a valid explanation
+- never be a dead link
+
+============================================================
+PLANNER PAGE
+============================================================
+
+Preserve the current grouped form structure.
+
+SECTIONS:
+
+1. Where are you going?
+2. Your situation
+3. Who's coming?
+4. How are we moving?
+5. Choose the energy
+6. Anything you're in the mood for?
+
+------------------------------------------------------------
+LOCATION
+------------------------------------------------------------
+
+The interface must support these states:
+
+IDLE
+LOCATION LOADING
+LOCATION SUCCESS
+LOCATION DENIED
+LOCATION UNAVAILABLE
+SEARCHING
+SEARCH SUCCESS
+SEARCH EMPTY
+SEARCH ERROR
+
+From:
+[ location ]
+
+To:
+[ destination ]
+
+Support a future "Use my current location" interaction.
+
+Do not expose fake functionality.
+
+If real Maps integration is not connected yet, keep the service abstraction clean and use mock location data.
+
+Do not hard-code map-specific implementation into presentation components.
+
+------------------------------------------------------------
+TIME
+------------------------------------------------------------
+
+Show friendly values:
+
+30 min
+1 hr
+2 hrs
+3 hrs
+4 hrs
+5+ hrs
+
+Store internal value as minutes.
+
+Example:
+
+3 hrs = 180
+
+Do not store human text as the actual business value.
+
+------------------------------------------------------------
+BUDGET
+------------------------------------------------------------
+
+Clearly label:
+
+"Budget per person"
+
+Use Indian currency:
+
+₹100
+₹250
+₹500
+₹1,000+
+
+Display the meaning clearly.
+
+Never mix USD examples with Glimmr's Indian target context.
+
+------------------------------------------------------------
+PEOPLE
+------------------------------------------------------------
+
+Support:
+
+1
+2
+3
+4
+5
+6+
+
+Selected state must be visually obvious.
+
+Must be keyboard accessible.
+
+------------------------------------------------------------
+TRANSPORT
+------------------------------------------------------------
+
+Support:
+
+Walk
+Bike
+Transit
+Drive
+
+Icons must supplement text, not replace it.
+
+------------------------------------------------------------
+ENERGY
+------------------------------------------------------------
+
+Preserve friendly labels such as:
+
+Food crawl
+Low-key day
+Date night
+Arts & culture
+Fresh air
+
+------------------------------------------------------------
+FREE TEXT
+------------------------------------------------------------
+
+Keep:
+
+"Anything you're in the mood for?"
+
+Example:
+"Good food, somewhere peaceful, and nice for photos."
+
+Store the text cleanly for future AI parsing.
+
+============================================================
+PLANNER VALIDATION
+============================================================
+
+Before Plan An Outing is executed:
+
+Validate required inputs.
+
+Examples:
+- missing location
+- missing destination where destination is required
+- invalid people count
+- invalid budget
+- invalid time
+
+Show clear inline errors.
+
+Do not allow invalid state to continue silently.
+
+The UI should explain what needs fixing.
+
+============================================================
+RESULTS PAGE
+============================================================
+
+Preserve the current 3-card layout.
+
+At top:
+show current user context.
+
+Example:
+
+4 people
+Rajajinagar → Indiranagar
+3 hrs
+₹500/person
+
+------------------------------------------------------------
+GLOBAL REGENERATE
+------------------------------------------------------------
+
+There must be ONE clear global:
+
+"↻ Regenerate"
+
+Meaning:
+"Create a different set of plans using the same main constraints."
+
+Remove confusing per-card regenerate controls if they currently exist.
+
+------------------------------------------------------------
+PLAN CARD
+------------------------------------------------------------
+
+Each card should show:
+
+- title
+- recommendation label
+- short description
+- price per person
+- total group cost
+- total duration
+- travel time
+- stops
+- why we picked this
+
+Primary action:
+
+"View Plan →"
+
+Secondary:
+
+"Edit"
+
+Possible recommendation labels:
+
+Best fit
+Best value
+Most adventurous
+
+Only use labels when their meaning is supported by the underlying plan attributes.
+
+============================================================
+LOADING STATES
+============================================================
+
+When generating plans:
+
+"Finding places that fit..."
+
+Then optionally:
+
+"Checking travel..."
+
+Then:
+
+"Building your outing..."
+
+Do not immediately reveal final values before generation is finished.
+
+Use skeletons that resemble the final plan cards.
+
+============================================================
+EMPTY STATE
+============================================================
+
+If no plan can be created:
+
+Do NOT simply show:
+"No results"
+
+Instead:
+
+"No plan fits everything yet."
+
+Explain what constraint is causing the problem when possible.
+
+Offer suggestions:
+- increase budget
+- increase time
+- change destination
+- change transport
+
+Do not silently loosen user constraints.
+
+============================================================
+ERROR STATE
+============================================================
+
+Use safe wording such as:
+
+"We couldn't build the plan right now."
+
+"Your inputs are still here. Try again."
+
+Never destroy the user's request after an error.
+
+============================================================
+PLAN DETAIL PAGE
+============================================================
+
+Preserve the current timeline layout.
+
+Each stop should contain:
+
+- number
+- place name
+- category
+- address
+- time
+- duration
+- estimated cost
+- contextual action
+
+Actions:
+
+Edit
+Replace
+Delete
+
+Use accessible action menus/icons with:
+- aria-label
+- tooltip/title where appropriate
+- visible keyboard focus
+
+Do not force users to discover icon meanings by guesswork.
+
+============================================================
+EDIT PLACE
+============================================================
+
+Clicking Edit opens:
+
+MOBILE:
+Bottom sheet
+
+DESKTOP:
+Dialog
+
+Options:
+
+Replace this place
+Make it cheaper
+Go farther
+Change category
+Custom instruction
+
+Custom instruction example:
+
+"I want a cheaper vegetarian restaurant farther away."
+
+Store the change as a structured edit request.
+
+Do not execute arbitrary UI-only text transformations.
+
+============================================================
+REPLACE PLACE
+============================================================
+
+Replacing a place should preserve the rest of the plan wherever possible.
+
+Example:
+
+Old:
+Restaurant A
+
+New:
+Restaurant B
+
+Then recalculate:
+
+- price
+- route
+- distance
+- travel time
+- total duration
+- feasibility
+
+============================================================
+DELETE PLACE
+============================================================
+
+When a stop is deleted:
+
+1. optionally show a lightweight confirmation for destructive action
+2. remove it from current plan state
+3. enter recalculation state
+4. update totals
+5. update travel
+6. update route summary
+7. update feasibility
+
+Show:
+
+"Recalculating your outing..."
+
+Do not fake instant updates if the interaction represents recalculation.
+
+============================================================
+ADD STOP
+============================================================
+
+Preserve current "Add stop" action.
+
+When clicked:
+
+allow user to choose:
+- Food
+- Cafe
+- Activity
+- Chill
+- Shopping
+- Custom
+
+Then show a mock candidate selection until the real recommendation backend is integrated.
+
+After adding:
+recalculate all derived values.
+
+If constraints are violated:
+
+show a clear warning.
+
+Example:
+
+"This adds 35 minutes and ₹180/person."
+
+"You're now 20 minutes over your available time."
+
+Do not silently break the original constraints.
+
+============================================================
+PLAN MATH
+============================================================
+
+Centralize derived values.
+
+Do NOT calculate:
+- price
+- duration
+- travel
+in multiple unrelated UI components.
+
+Create one plan calculation utility/service.
+
+Derived data:
+
+pricePerPerson
+groupTotal
+totalDuration
+travelTime
+routeDistance
+feasible
+
+Frontend should display these values consistently everywhere.
+
+============================================================
+PLAN STATE
+============================================================
+
+Create or refine a single plan state model.
+
+Conceptually:
+
+Plan:
+- id
+- title
+- stops
+- constraints
+- pricePerPerson
+- groupTotal
+- totalDuration
+- travelTime
+- routeDistance
+- recommendationReason
+- status
+
+Status:
+
+idle
+loading
+ready
+editing
+adding
+deleting
+replacing
+regenerating
+recalculating
+success
+error
+
+Do not create conflicting state variables for the same concept across components.
+
+============================================================
+MOTION SYSTEM
+============================================================
+
+Use motion only where it helps explain state.
+
+KEEP:
+- hero entrance
+- subtle card entrance
+- plan replacement transition
+- bottom sheet opening
+- modal opening
+- recalculation transition
+- price/time value transition
+
+DO NOT:
+- make every object float
+- use excessive bounce
+- create long page transitions
+- make primary interactions slow
+
+Use short, responsive transitions.
+
+Support:
+
+prefers-reduced-motion
+
+When reduced motion is requested:
+- remove or minimize non-essential motion
+- preserve functionality
+
+============================================================
+RESPONSIVE DESIGN
+============================================================
+
+DESKTOP:
+Preserve current multi-column layouts where useful.
+
+MOBILE:
+Use:
+- single column
+- larger touch targets
+- bottom-sheet editing
+- vertical itinerary
+- clear sticky primary action where appropriate
+
+Do not allow:
+- horizontal page overflow
+- cramped form fields
+- text clipping
+- buttons touching the screen edge
+- unusable modal widths
+
+Test narrow mobile widths.
+
+============================================================
+ACCESSIBILITY
+============================================================
+
+Implement:
+
+- semantic headings
+- proper input labels
+- keyboard navigation
+- visible focus
+- accessible dialogs
+- accessible bottom sheets
+- accessible icon buttons
+- aria-label where needed
+- no hover-only critical behavior
+- sufficient contrast
+- readable text
+- comfortable touch targets
+- reduced motion
+
+Do not communicate important meaning using color alone.
+
+Examples:
+Do not make "Best Fit" understandable only through a blue border.
+
+The label must communicate it.
+
+============================================================
+MOCK DATA
+============================================================
+
+Continue using mock data until backend integration happens.
+
+But centralize all mock data.
+
+Use Indian examples:
+Bengaluru
+Rajajinagar
+Indiranagar
+₹ values
+
+Do not use:
+Hayes Valley
+The Mission
+USD
+US-specific examples
+
+============================================================
+SERVICE LAYER
+============================================================
+
+Maintain clear abstractions for future integration:
+
+plannerService
+planService
+locationService
+aiService
+mapService
+
+For now mock implementations are acceptable.
+
+Do not connect real Firebase, Maps, or AI APIs during this task unless already present and stable.
+
+============================================================
+CODE QUALITY
+============================================================
+
+Prefer:
+
+small focused components
+clear props
+typed data
+centralized calculations
+reusable UI primitives
+clean service boundaries
+
+Avoid:
+
+huge page components
+duplicated logic
+magic numbers
+dead code
+unused imports
+console.log spam
+fake async behavior
+hidden state mutations
+
+============================================================
+QA CHECKLIST
+============================================================
+
+After all modifications:
+
+1. Run development server.
+2. Run TypeScript check.
+3. Run lint if available.
+4. Run production build.
+5. Check landing page.
+6. Check planner.
+7. Check validation.
+8. Check results.
+9. Check Regenerate.
+10. Check View Plan.
+11. Check Edit.
+12. Check Replace.
+13. Check Delete.
+14. Check Add Stop.
+15. Check recalculation.
+16. Check loading states.
+17. Check error states.
+18. Check empty states.
+19. Check mobile.
+20. Check keyboard navigation.
+21. Check focus visibility.
+22. Check console for runtime errors.
+
+Fix all confirmed issues.
+
+Run validation again after fixes.
+
+============================================================
+IMPORTANT PRODUCT TESTS
+============================================================
+
+Test this exact scenario:
+
+User:
+From = Rajajinagar
+To = Indiranagar
+People = 4
+Budget = ₹500/person
+Time = 3 hours
+Transport = Transit
+Energy = Food crawl
+Preference = "Good food, somewhere peaceful, and nice for photos."
+
+Result:
+
+3 plans.
+
+Then:
+
+1. Open Plan A.
+2. Delete one stop.
+3. Verify total cost changes.
+4. Verify duration changes.
+5. Verify travel summary updates.
+6. Add a new stop.
+7. Verify values change again.
+8. Replace one restaurant.
+9. Verify the rest of the plan remains unchanged unless necessary.
+10. Edit the replacement request.
+11. Regenerate the overall plan.
+12. Verify original constraints remain.
+13. Start the outing.
+
+The flow must remain coherent.
+
+============================================================
+START OUTING
+============================================================
+
+Do not fully redesign the outing module.
+
+Make sure the selected plan can lead into:
+
+"Start this outing"
+
+Then:
+
+Active Outing
+
+The user should still be able to see:
+- stops
+- current plan
+- cost
+- route/time information
+
+If full GPS progress is not implemented yet, use a clean mock state.
+
+============================================================
+FINAL OUTPUT
+============================================================
+
+After implementation, report:
+
+1. Existing files inspected
+2. Files modified
+3. Files added
+4. Packages added
+5. Features fixed
+6. Features added
+7. Validation performed
+8. Build result
+9. Remaining intentional limitations
+
+Do not claim unverified functionality.
+
+MOST IMPORTANT:
+
+This is an EXISTING GLIMMR product.
+
+REFINE IT.
+
+DO NOT REINVENT IT.
+DO NOT REDESIGN IT.
+DO NOT BREAK WORKING PARTS.
+
+INSPECT → MODIFY → TEST → FIX → TEST AGAIN.

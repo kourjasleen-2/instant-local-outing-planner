@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "GLIMMR Outing Planner"
+description = "A context-aware local outing planner that turns a destination, time, budget, and mood into a flexible plan people can actually use."
+version = "1.0.0"
+id = "artifacts/glimmr"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 18923
+
+[services.development]
+run = "pnpm --filter @workspace/glimmr run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/glimmr", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/glimmr/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "18923"
+BASE_PATH = "/"
