@@ -8,13 +8,10 @@ const wait = (ms = 420) => new Promise((resolve) => window.setTimeout(resolve, m
 /**
  * In-memory plan store, keyed by plan id.
  *
- * Honest limitation: this is a client-side cache, not persistence. It
- * survives navigation within the app (Results -> Plan detail -> Outing) but
- * not a hard refresh or a fresh tab on a deep link -- there's no backend yet
- * to hand a plan id to (see Phase 5, "Backend activation", in the
- * architecture doc). getPlanById below falls back to regenerating from the
- * default request rather than 404ing, which is the right MVP trade-off but
- * not the final behavior.
+ * Client-side cache only — survives navigation within the app but not a hard
+ * refresh or a new tab on a deep link. getPlanById falls back to regenerating
+ * from the default request rather than 404ing, which is the right trade-off
+ * until a real backend replaces this service layer.
  */
 const planStore = new Map<string, Plan>();
 
@@ -49,7 +46,7 @@ export async function getPlanById(id: string): Promise<Plan> {
   await wait(260);
   const cached = planStore.get(id);
   if (cached) return calculatePlanTotals(cached, 'ready');
-  // Deep-link / refresh fallback -- see planStore comment above.
+  // Refresh fallback: regenerate from the default request.
   const [fallback] = generatePlans(defaultRequest, places);
   return calculatePlanTotals(fallback, 'ready');
 }
@@ -86,12 +83,8 @@ export async function editPlan(plan: Plan, edit: PlanEdit): Promise<Plan> {
     steps = steps.map((step) => (step.id === edit.stepId ? { ...step, ...edit.changes } : step));
   }
 
-  // Edit-instruction parsing: free text -> a structured action against the
-  // *current* step, same NLP-boundary rule the preference parser uses --
-  // this only ever selects among real places already in the data set, never
-  // invents one. See vision Section 4 (AI role) and Section 7 (constraint
-  // preservation: change only what was asked, keep the rest of the plan
-  // stable).
+  // Natural-language instruction: map keywords to a structured place swap
+  // against the existing data set — never invents a new place.
   if (edit.type === 'edit' && edit.stepId && edit.instruction) {
     const instruction = edit.instruction.toLowerCase();
     const currentStep = steps.find((step) => step.id === edit.stepId);

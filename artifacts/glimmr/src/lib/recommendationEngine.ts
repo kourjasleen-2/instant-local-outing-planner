@@ -6,17 +6,15 @@ import { serviceAreas } from '@/data/places';
  * ============================================================================
  * GLIMMR recommendation engine
  * ============================================================================
- * Deterministic and explainable by design (vision Section 11): same request
- * + same data always produces the same plans, and every plan carries the
- * reasons it was picked. This file is the one place scoring weights live —
- * they are hypotheses, meant to be tuned, not scattered through the app.
+ * Deterministic scoring engine: same request + same data always produces the
+ * same plans, and every plan carries the reasons it was picked. Scoring
+ * weights are centralised here so they're easy to tune as the dataset grows.
  *
- * Responsibility boundary (vision Section 17): this module answers "which
- * combination fits the user" using facts it's given. It never invents a
- * place, price, or opening hour — those come from data/places.ts. Distance
- * is approximated with straight-line geometry (see estimateTravel below)
- * as an explicit, isolated stand-in for a real maps-service (Phase 3);
- * swapping in a real routing API later means changing that one function.
+ * This module selects and ranks combinations of places from data/places.ts.
+ * It never invents a place, price, or opening hour. Distance is approximated
+ * with straight-line (Haversine) geometry — a deliberate, isolated stand-in
+ * for a real routing API; swapping one in later means changing estimateTravel
+ * and nothing else.
  * ============================================================================
  */
 
@@ -36,10 +34,8 @@ const OUTING_TYPE_TAGS: Record<OutingType, string[]> = {
   'Fresh air': ['outdoor', 'active'],
 };
 
-// Standing in for the NLP layer (vision Section 4/7): free text in, tags
-// out. This never returns anything but tags — it cannot represent a place,
-// price, or plan, which is what keeps the AI/data boundary real rather than
-// aspirational once a real LLM call replaces this keyword match.
+// Maps free-text preference to activity tags. Tags are matched against
+// place.activities in data/places.ts to influence plan scoring.
 const PREFERENCE_TAG_KEYWORDS: Record<string, string[]> = {
   peaceful: ['peaceful', 'quiet', 'calm', 'chill'],
   food: ['food', 'eat', 'dinner', 'lunch', 'breakfast', 'hungry', 'meal'],
@@ -59,8 +55,7 @@ export function parsePreferenceTags(preference?: string): string[] {
     .map(([tag]) => tag);
 }
 
-// Rough planning speeds (km/h), not live traffic data — a deliberate,
-// isolated approximation. See module header.
+// Rough planning speeds (km/h) — not live traffic, just a useful estimate.
 const TRANSPORT_SPEED_KMH: Record<TransportMode, number> = {
   walk: 4.5,
   bike: 13,
@@ -124,8 +119,7 @@ function scorePlace(place: Place, request: PlannerRequest, tags: Set<string>): S
 }
 
 // Category buckets used to build varied, sensible stop sequences.
-// Deliberately data-driven (matched against real category strings in
-// data/places.ts) rather than hardcoded per-place, so new seeded places
+// Data-driven against the category strings in data/places.ts so new places
 // slot in automatically by category.
 const BUCKETS: Record<'starter' | 'main' | 'activity' | 'evening', string[]> = {
   starter: ['Cafe', 'Dessert'],
@@ -141,12 +135,10 @@ function bucketOf(place: Place): keyof typeof BUCKETS | null {
   return null;
 }
 
-// Three distinct stop-sequence templates — this is what makes the 3 results
+// Three distinct stop-sequence templates — what makes the 3 results
 // meaningfully different shapes of outing, not 3 shuffles of the same idea.
 // 'sort' controls how each bucket's candidates are ranked before picking:
-// score-based for the general-purpose templates, price-based for the one
-// explicitly promising to be the cheaper option — otherwise "Best value"
-// was just another top-scored pick that happened to have fewer stops.
+// score-based for general templates, price-based for the value option.
 const PLAN_TEMPLATES: { label: string; buckets: (keyof typeof BUCKETS)[]; sort: 'score' | 'price' }[] = [
   { label: 'Best fit', buckets: ['starter', 'main', 'activity'], sort: 'score' },
   { label: 'Best value', buckets: ['starter', 'main'], sort: 'price' },
@@ -200,8 +192,7 @@ function resolveServiceArea(request: PlannerRequest): string {
   const match = serviceAreas.find(
     (area) => area.active && (request.from.toLowerCase().includes(area.name.toLowerCase()) || request.to.toLowerCase().includes(area.name.toLowerCase())),
   );
-  // MVP fallback: default to the first active area rather than returning no
-  // candidates, since V1 only truly covers one active area today.
+  // MVP fallback: default to the first active area.
   return match?.id ?? serviceAreas.find((area) => area.active)?.id ?? serviceAreas[0].id;
 }
 
@@ -231,12 +222,10 @@ export function generatePlans(request: PlannerRequest, allPlaces: Place[]): Plan
     for (const bucket of template.buckets) {
       const pool = [...(byBucket.get(bucket) ?? [])];
       if (template.sort === 'price') pool.sort((a, b) => placePrice(a.place) - placePrice(b.place));
-      // Budget-aware pick: prefer the best-ranked (by this template's sort)
-      // candidate that still fits what's left of the per-person budget.
-      // Falls back to the top-ranked candidate regardless of price rather
-      // than an empty stop — a plan that runs over budget and says so
-      // (via feasibilityNote below) is more useful than a silently
-      // dropped stop.
+      // Budget-aware pick: prefer the best-ranked candidate that still fits
+      // the remaining per-person budget. Falls back to top-ranked regardless
+      // of price — a plan that runs over budget and says so is more useful
+      // than a silently dropped stop.
       const remaining = request.budget - runningPrice;
       const unused = pool.filter((entry) => !usedPlaceIds.has(entry.place.id));
       const withinBudget = unused.find((entry) => placePrice(entry.place) <= remaining);
@@ -251,10 +240,9 @@ export function generatePlans(request: PlannerRequest, allPlaces: Place[]): Plan
     let steps = buildSteps(chosen.map((entry) => entry.place), request);
     let totals = totalsFor(steps);
 
-    // Feasibility check (vision Section 8): if the full combination doesn't
-    // fit the time window, drop the lowest-scored stop and recheck once,
-    // rather than either silently ignoring the overage or discarding the
-    // whole plan outright.
+    // If the full combination doesn't fit the time window, drop the
+    // lowest-scored stop and recheck once, rather than silently ignoring
+    // the overage or discarding the whole plan outright.
     if (totals.totalMinutes > request.availableMinutes && chosen.length > 2) {
       const trimmed = [...chosen].sort((a, b) => a.score - b.score).slice(1);
       const trimmedSteps = buildSteps(trimmed.map((entry) => entry.place), request);
@@ -279,11 +267,8 @@ export function generatePlans(request: PlannerRequest, allPlaces: Place[]): Plan
 
     chosen.forEach((entry) => usedPlaceIds.add(entry.place.id));
 
-    // Reasons are computed from the FINAL combined plan, not the individual
-    // per-place scores above — a place that fit the budget alone doesn't
-    // mean the combination does, and a plan flagged infeasible must never
-    // also claim "fits your budget" (that mismatch was a real bug caught by
-    // actually running this against the seed data, not just typechecking).
+    // Reasons are derived from the final combined plan, not per-place scores.
+    // A plan flagged infeasible never also claims "fits your budget".
     const reasons: string[] = [];
     if (totals.pricePerPerson <= request.budget) reasons.push('Fits your budget');
     if (totals.totalMinutes <= request.availableMinutes) reasons.push('Fits your time');

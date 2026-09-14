@@ -1,9 +1,8 @@
 import type { Place, ServiceArea } from '@/types/glimmr';
 
 /**
- * V1 coverage limit (see vision Section 9) — rows, not code branches.
- * Adding a city or neighborhood later means adding a row here, not touching
- * the recommendation engine or frontend.
+ * V1 coverage — rows, not code branches. Adding a city or neighbourhood
+ * later means adding a row here, not touching the recommendation engine.
  */
 export const serviceAreas: ServiceArea[] = [
   { id: 'indiranagar', name: 'Indiranagar', city: 'Bengaluru', active: true },
@@ -12,17 +11,13 @@ export const serviceAreas: ServiceArea[] = [
 ];
 
 /**
- * Real, named Indiranagar places, researched via web search (Sept 2026) —
- * not invented filler. Two honesty notes, exactly what verificationStatus/
- * confidence exist to carry:
- *  - lat/lng are approximate placements within the correct block (100 Feet
- *    Road, 12th Main, CMH Road etc.), not verified geocodes — good enough
- *    for relative distance estimates between nearby places, not for turning
- *    into a real route until Maps integration (Phase 3) replaces them.
- *  - priceMin/priceMax are rough bands from published guides, not scraped
- *    live menus — treat as planning estimates, not quotes.
- * AI never generated any of this; it came from real sources, by design
- * (vision Section 4 — AI is not the source of truth for place facts).
+ * Real, named Indiranagar places researched via web search (Sept 2026).
+ * Two notes on accuracy:
+ *  - lat/lng are approximate placements within the correct block, not
+ *    verified geocodes — good enough for relative distance estimates between
+ *    nearby places, not for real turn-by-turn routing.
+ *  - priceMin/priceMax are rough bands from published guides, not live menus
+ *    — treat as planning estimates, not quotes.
  */
 export const places: Place[] = [
   {

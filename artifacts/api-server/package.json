@@ -1,6 +1,8 @@
 {
-  "name": "@workspace/api-server",
-  "version": "0.0.0",
+  "name": "@glimmr/api-server",
+  "version": "0.1.0",
+  "description": "Glimmr API server — Express 5",
+  "author": "Meghana",
   "private": true,
   "type": "module",
   "scripts": {
