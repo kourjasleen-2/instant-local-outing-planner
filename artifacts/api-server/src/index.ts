@@ -1,13 +1,16 @@
-import app from "./app";
+import dotenv from "dotenv";
+import { fileURLToPath } from "node:url";
 import { logger } from "./lib/logger";
 
-const rawPort = process.env["PORT"];
+// npm workspaces run this process from the repository root. Resolve the
+// backend's own .env file relative to this entry point instead of process.cwd().
+dotenv.config({ path: fileURLToPath(new URL("../.env", import.meta.url)) });
 
-if (!rawPort) {
-  throw new Error(
-    "PORT environment variable is required but was not provided.",
-  );
-}
+// This must be dynamic: app imports the Supabase and database clients, both of
+// which need the environment variables above during module initialisation.
+const { default: app } = await import("./app");
+
+const rawPort = process.env["PORT"] ?? "3001";
 
 const port = Number(rawPort);
 

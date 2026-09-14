@@ -2,6 +2,7 @@ import { places } from '@/data/mockData';
 import { generatePlans, parsePreferenceTags, recalculateRoute } from '@/lib/recommendationEngine';
 import { placePrice } from '@/lib/glimmr-format';
 import type { Outing, Plan, PlanEdit, PlannerRequest, PlanStep } from '@/types/glimmr';
+import { apiFetch } from '@/lib/api';
 
 const wait = (ms = 420) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
@@ -55,20 +56,17 @@ export function calculatePlanTotals(plan: Plan, status: Plan['status'] = plan.st
 }
 
 export async function createPlans(request: PlannerRequest): Promise<Plan[]> {
-  await wait();
-  if (request.availableMinutes <= 30 || request.budget <= 100) return [];
-  planStore.clear();
-  const plans = generatePlans(request, places).map((plan) => calculatePlanTotals(plan, 'ready'));
+  const response = await apiFetch<{ plans: Plan[] }>('/plans/generate', { method: 'POST', body: JSON.stringify(request) });
+  response.plans.forEach((plan) => planStore.set(plan.id, { ...plan, status: 'ready' }));
   persistPlans();
-  return plans;
+  return response.plans.map((plan) => ({ ...plan, status: 'ready' }));
 }
 
 export async function getPlanById(id: string): Promise<Plan | null> {
-  await wait(260);
   restorePlans();
   const cached = planStore.get(id);
-  if (cached) return calculatePlanTotals(cached, 'ready');
-  return null;
+  if (cached) return cached;
+  try { const plan = await apiFetch<Plan>(`/plans/${id}`); const hydrated = { ...plan, status: 'ready' as const }; planStore.set(id, hydrated); return hydrated; } catch { return null; }
 }
 
 export async function getOuting(planId: string): Promise<Outing | null> {

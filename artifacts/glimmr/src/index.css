@@ -431,6 +431,7 @@ textarea.input { padding-top: 13px; min-height: 92px; resize: vertical; }
 .step.active { color: hsl(var(--foreground)); }
 .step.active strong { border-color: #3b82f6; background: #3b82f6; color: #fff; }
 .step-line { width: 28px; height: 1px; background: hsl(var(--border)); }
+.step-line.active { background: #3b82f6; }
 .results-context { padding: 17px 20px; display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 30px; }
 .context-pill { padding: 7px 10px; background: hsl(var(--secondary)); border-radius: 999px; font-size: .73rem; font-weight: 700; }
 .context-pill.blue { color: #2563eb; background: #e3edff; }

@@ -1,8 +1,9 @@
 import { FormEvent, useState } from 'react';
-import { ArrowRight, Car, CircleHelp, Footprints, TrainFront } from 'lucide-react';
+import { ArrowRight, Car, CircleHelp, Footprints, TrainFront, LocateFixed } from 'lucide-react';
 import { useLocation } from 'wouter';
 import { defaultRequest } from '@/data/mockData';
 import { Header, LocationField } from '@/components/glimmr-ui';
+import { JourneyStepper } from '@/components/JourneyStepper';
 import { StaggerContainer, StaggerItem } from '@/components/motion/Stagger';
 import type { OutingType, PlannerRequest, TransportMode } from '@/types/glimmr';
 
@@ -27,6 +28,7 @@ export default function Planner() {
     setForm((current) => ({ ...current, [key]: value }));
     if (key in errors) setErrors((current) => ({ ...current, [key]: undefined }));
   };
+  const useMyLocation = () => { if (!navigator.geolocation) return setErrors((current) => ({ ...current, from: 'Location is not available in this browser.' })); navigator.geolocation.getCurrentPosition((position) => { update('from', `${position.coords.latitude.toFixed(5)}, ${position.coords.longitude.toFixed(5)}`); }, () => setErrors((current) => ({ ...current, from: 'Location permission was denied. Enter a starting area instead.' })), { enableHighAccuracy: true, timeout: 10000, maximumAge: 300000 }); };
   const submit = (event: FormEvent) => {
     event.preventDefault();
     const nextErrors: typeof errors = {};
@@ -41,12 +43,12 @@ export default function Planner() {
     setLocation('/results');
   };
   return <div className="glimmr-app"><Header compact /><main className="page container-shell">
-    <div className="stepper"><div className="step active"><strong>1</strong> Shape it</div><div className="step-line" /><div className="step"><strong>2</strong> Pick a path</div><div className="step-line" /><div className="step"><strong>3</strong> Go</div></div>
+    <JourneyStepper active="shape" />
     <div className="page-header"><div><div className="eyebrow">a few useful constraints</div><h1 className="display">What sounds good?</h1><p className="muted" style={{ maxWidth: 500 }}>The more honest you are, the better the plan. You can change everything later.</p></div></div>
     <div className="planner-layout">
       <form className="surface planner-form" onSubmit={submit}>
         <StaggerContainer>
-         <StaggerItem><section className="form-section"><h2>Where are you going?</h2><p>Tell us where the outing starts and where you want to end up.</p><div className="field-grid"><LocationField id="from" label="From" value={form.from} placeholder="Current location or neighbourhood" onChange={(value) => update('from', value)} error={errors.from} /><LocationField id="to" label="To" value={form.to} placeholder="Destination or neighbourhood" onChange={(value) => update('to', value)} error={errors.to} /></div></section></StaggerItem>
+        <StaggerItem><section className="form-section"><h2>Where are you going?</h2><p>Tell us where the outing starts and where you want to end up.</p><div className="field-grid"><LocationField id="from" label="From" value={form.from} placeholder="Current location or neighbourhood" onChange={(value) => update('from', value)} error={errors.from} /><LocationField id="to" label="To" value={form.to} placeholder="Destination or neighbourhood" onChange={(value) => update('to', value)} error={errors.to} /></div><button type="button" className="btn btn-soft" onClick={useMyLocation}><LocateFixed size={15} /> Use my location</button></section></StaggerItem>
           <StaggerItem><section className="form-section"><h2>Your situation</h2><p>How much time and spend can we work with?</p><div className="field-grid"><div className="field"><label htmlFor="time">Available time</label><select id="time" className="select" aria-invalid={Boolean(errors.availableMinutes)} aria-describedby={errors.availableMinutes ? 'time-error' : undefined} value={form.availableMinutes} onChange={(event) => update('availableMinutes', Number(event.target.value))} data-testid="select-time">{timeOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>{errors.availableMinutes && <span id="time-error" className="field-error" role="alert">{errors.availableMinutes}</span>}</div><div className="field"><label htmlFor="budget">Budget per person</label><select id="budget" className="select" aria-invalid={Boolean(errors.budget)} aria-describedby={errors.budget ? 'budget-error' : undefined} value={form.budget} onChange={(event) => update('budget', Number(event.target.value))} data-testid="select-budget">{budgetOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>{errors.budget && <span id="budget-error" className="field-error" role="alert">{errors.budget}</span>}</div></div></section></StaggerItem>
           <StaggerItem><section className="form-section"><h2>Who’s coming?</h2><p>A couple of people changes the rhythm.</p><div className="choice-grid" aria-describedby={errors.people ? 'people-error' : undefined}>{[1, 2, 3, 4, 5, 6].map((people) => <button type="button" key={people} className={`choice ${form.people === people ? 'selected' : ''}`} onClick={() => update('people', people)} data-testid={`button-people-${people}`}>{people === 6 ? '6+' : people} {people === 1 ? 'person' : 'people'}</button>)}</div>{errors.people && <span id="people-error" className="field-error" role="alert">{errors.people}</span>}</section></StaggerItem>
         <StaggerItem><section className="form-section"><h2>How are we moving?</h2><p>We’ll use this to keep the route realistic.</p><div className="choice-grid">{transports.map(({ id, label, icon: Icon }) => <button type="button" key={id} className={`choice ${form.transport === id ? 'selected' : ''}`} onClick={() => update('transport', id)} data-testid={`button-transport-${id}`}><Icon size={14} /> {label}</button>)}</div></section></StaggerItem>

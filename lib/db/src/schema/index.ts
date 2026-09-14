@@ -1,20 +1,15 @@
-// Export your models here. Add one export per file
-// export * from "./posts";
-//
-// Each model/table should ideally be split into different files.
-// Each model/table should define a Drizzle table, insert schema, and types:
-//
-//   import { pgTable, text, serial } from "drizzle-orm/pg-core";
-//   import { createInsertSchema } from "drizzle-zod";
-//   import { z } from "zod/v4";
-//
-//   export const postsTable = pgTable("posts", {
-//     id: serial("id").primaryKey(),
-//     title: text("title").notNull(),
-//   });
-//
-//   export const insertPostSchema = createInsertSchema(postsTable).omit({ id: true });
-//   export type InsertPost = z.infer<typeof insertPostSchema>;
-//   export type Post = typeof postsTable.$inferSelect;
+import { boolean, index, integer, jsonb, pgEnum, pgTable, real, text, timestamp, uuid } from "drizzle-orm/pg-core";
 
-export {}
+export const transportModeEnum = pgEnum("transport_mode", ["walk", "bike", "transit", "drive"]);
+export const priceBasisEnum = pgEnum("price_basis", ["per_person", "per_group", "flat"]);
+export const outingStatusEnum = pgEnum("outing_status", ["active", "completed", "abandoned"]);
+const timestamps = { createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull() };
+
+export const profiles = pgTable("profiles", { id: uuid("id").primaryKey(), email: text("email"), displayName: text("display_name"), ...timestamps });
+export const places = pgTable("places", {
+  id: uuid("id").primaryKey().defaultRandom(), name: text("name").notNull(), serviceArea: text("service_area").notNull().default("indiranagar"), category: text("category").notNull(), subcategory: text("subcategory"), address: text("address").notNull(), description: text("description").notNull(), lat: real("lat").notNull(), lng: real("lng").notNull(), priceMin: integer("price_min").notNull(), priceMax: integer("price_max").notNull(), priceBasis: priceBasisEnum("price_basis").notNull().default("per_person"), openingHours: text("opening_hours").notNull(), typicalVisitDuration: integer("typical_visit_duration").notNull(), suitableFor: text("suitable_for").array().notNull().default([]), activities: text("activities").array().notNull().default([]), vibe: text("vibe").notNull().default(""), rating: real("rating").notNull().default(0), reviewCount: integer("review_count").notNull().default(0), experienceScore: real("experience_score").notNull().default(0.5), websiteUrl: text("website_url"), mapsUrl: text("maps_url"), source: text("source").notNull().default("manual"), verificationStatus: text("verification_status").notNull().default("unverified"), lastVerified: text("last_verified").notNull(), confidence: real("confidence").notNull().default(0.5), active: boolean("active").notNull().default(true), ...timestamps,
+}, (t) => [index("places_area_idx").on(t.serviceArea), index("places_category_idx").on(t.category), index("places_active_idx").on(t.active)]);
+export const plans = pgTable("plans", { id: uuid("id").primaryKey().defaultRandom(), userId: uuid("user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }), title: text("title").notNull(), subtitle: text("subtitle"), vibe: text("vibe"), totalMinutes: integer("total_minutes").notNull(), pricePerPerson: integer("price_per_person").notNull(), groupTotal: integer("group_total").notNull(), totalDistanceKm: real("total_distance_km").notNull().default(0), travelMinutes: integer("travel_minutes").notNull().default(0), feasible: boolean("feasible").notNull(), feasibilityNote: text("feasibility_note"), recommendationLabel: text("recommendation_label").notNull(), recommendationReason: text("recommendation_reason").array().notNull().default([]), request: jsonb("request").notNull(), routeGeometry: jsonb("route_geometry"), ...timestamps }, (t) => [index("plans_user_idx").on(t.userId)]);
+export const planStops = pgTable("plan_stops", { id: uuid("id").primaryKey().defaultRandom(), planId: uuid("plan_id").notNull().references(() => plans.id, { onDelete: "cascade" }), placeId: uuid("place_id").notNull().references(() => places.id), position: integer("position").notNull(), arrival: text("arrival"), durationMinutes: integer("duration_minutes").notNull(), travelMinutes: integer("travel_minutes").notNull().default(0), distanceKm: real("distance_km").notNull().default(0), note: text("note"), ...timestamps }, (t) => [index("plan_stops_plan_idx").on(t.planId)]);
+export const outings = pgTable("outings", { id: uuid("id").primaryKey().defaultRandom(), userId: uuid("user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }), planId: uuid("plan_id").notNull().references(() => plans.id, { onDelete: "cascade" }), status: outingStatusEnum("status").notNull().default("active"), currentStopId: uuid("current_stop_id").references(() => planStops.id), startedAt: timestamp("started_at", { withTimezone: true }).defaultNow().notNull(), completedAt: timestamp("completed_at", { withTimezone: true }), ...timestamps }, (t) => [index("outings_user_idx").on(t.userId), index("outings_plan_idx").on(t.planId)]);
+export const outingEvents = pgTable("outing_events", { id: uuid("id").primaryKey().defaultRandom(), userId: uuid("user_id").references(() => profiles.id, { onDelete: "set null" }), outingId: uuid("outing_id").references(() => outings.id, { onDelete: "cascade" }), planId: uuid("plan_id").references(() => plans.id, { onDelete: "cascade" }), eventType: text("event_type").notNull(), payload: jsonb("payload").notNull().default({}), createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull() }, (t) => [index("events_user_idx").on(t.userId), index("events_type_idx").on(t.eventType)]);

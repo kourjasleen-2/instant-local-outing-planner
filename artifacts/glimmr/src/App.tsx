@@ -11,6 +11,8 @@ import Planner from '@/pages/planner';
 import Results from '@/pages/results';
 import PlanDetail from '@/pages/plan-detail';
 import Outing from '@/pages/outing';
+import AuthPage from '@/pages/auth';
+import { useAuth } from '@/hooks/useAuth';
 import {
   Route,
   Switch,
@@ -29,16 +31,19 @@ function Router() {
       <PageTransition routeKey={location}>
         <Switch>
            <Route path="/" component={Home} />
-           <Route path="/planner" component={Planner} />
-           <Route path="/results" component={Results} />
-           <Route path="/plan/:id" component={PlanDetail} />
-           <Route path="/outing/:id" component={Outing} />
+           <Route path="/auth" component={AuthPage} />
+           <Route path="/planner" component={() => <Protected><Planner /></Protected>} />
+           <Route path="/results" component={() => <Protected><Results /></Protected>} />
+           <Route path="/plan/:id" component={() => <Protected><PlanDetail /></Protected>} />
+           <Route path="/outing/:id" component={() => <Protected><Outing /></Protected>} />
           <Route component={NotFound} />
         </Switch>
       </PageTransition>
     </RoutedErrorBoundary>
   );
 }
+
+function Protected({ children }: { children: ReactNode }) { const { user, loading } = useAuth(); if (loading) return <div className="glimmr-app page">Loading…</div>; if (!user) return <AuthPage />; return <>{children}</>; }
 
 function RoutedErrorBoundary({ children }: { children: ReactNode }) {
   const [location] = useLocation();
