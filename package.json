@@ -5,6 +5,9 @@
   "author": "Meghana",
   "license": "MIT",
   "scripts": {
+    "dev": "npm run dev -w @glimmr/app",
+    "dev:server": "npm run dev -w @glimmr/api-server",
+    "start": "npm run dev -w @glimmr/app",
     "build": "npm run typecheck && npm run build --workspaces --if-present",
     "typecheck:libs": "tsc --build",
     "typecheck": "npm run typecheck:libs && npm run typecheck --workspaces --if-present"
